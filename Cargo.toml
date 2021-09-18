@@ -1,0 +1,56 @@
+[package]
+name = "pinetime-rs"
+version = "0.1.0"
+edition = "2018"
+exclude = [
+    "host-tools",
+    "doc",
+]
+
+[[bin]]
+name = "pinetime"
+path = "src/main.rs"
+
+[lib]
+name = "pinetime_lib"
+path = "src/lib.rs"
+
+[dependencies]
+cortex-m = "0.6"
+cortex-m-rt = "0.6"
+cortex-m-rtic = "0.6.0-alpha.5"
+display-interface = "0.4"
+display-interface-spi = "0.4"
+embedded-graphics = "0.7"
+debouncr = "0.2"
+dwt-systick-monotonic = "0.1.0-alpha.3"
+#rubble =
+#rubble-nrf5x =
+
+[dependencies.nrf52832-hal]
+version = "0.13"
+features = ["rt"]
+default-features = false
+
+[dependencies.rtt-target]
+version = "0.3"
+features = ["cortex-m"]
+default-features = false
+
+[dependencies.panic-rtt-target]
+version = "0.1"
+features = ["cortex-m"]
+default-features = false
+
+[dependencies.st7789]
+version = "0.6"
+features = ["graphics", "batch", "buffer"]
+default-features = false
+
+[profile.dev]
+codegen-units = 1
+
+[profile.release]
+lto = true
+debug = true
+codegen-units = 1
