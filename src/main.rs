@@ -30,17 +30,16 @@ mod app {
     use display_interface_spi::SPIInterfaceNoCS;
     use embedded_graphics::prelude::*;
     use hal::{
-        clocks::{Clocks, LfOscConfiguration, HFCLK_FREQ, LFCLK_FREQ},
+        clocks::Clocks,
         gpio::{self, Floating, Input, Level, Output, Pin, PushPull},
         pac, ppi,
         prelude::*,
-        rtc::RtcInterrupt,
         spim::{self, Spim},
-        timer::{self, Timer},
+        timer::Timer,
     };
     use pinetime_lib::{display, resources::Fonts};
     use rtc_monotonic::RtcMonotonic;
-    use rtic::time::duration::{Milliseconds, Seconds};
+    use rtic::time::duration::Milliseconds;
     use rtt_target::{rprintln, rtt_init_print};
     use st7789::{Orientation, ST7789};
 
@@ -87,7 +86,7 @@ mod app {
 
         // Switch to the external HF oscillator for bluetooth
         // and start the low-power/low-frequency clock for RTCs
-        let clocks = Clocks::new(CLOCK).enable_ext_hfosc().start_lfclk();
+        let _clocks = Clocks::new(CLOCK).enable_ext_hfosc().start_lfclk();
         let gpio = gpio::p0::Parts::new(P0);
         let ppi_channels = ppi::Parts::new(PPI);
 
@@ -102,9 +101,9 @@ mod app {
 
         // TODO backlight
         let mut bl0 = gpio.p0_14.into_push_pull_output(Level::High).degrade();
-        let mut bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
-        let mut bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
-        //bl0.set_low().unwrap();
+        let mut _bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
+        let mut _bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
+        bl0.set_low().unwrap();
         //bl1.set_low().unwrap();
         //bl2.set_low().unwrap();
 
@@ -133,8 +132,8 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        //poll_button::spawn().unwrap();
-        //update_display::spawn().unwrap();
+        poll_button::spawn().unwrap();
+        update_display::spawn().unwrap();
         clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
 
         (
@@ -162,7 +161,6 @@ mod app {
     }
     */
 
-    /*
     #[task(local = [button, button_debouncer])]
     fn poll_button(ctx: poll_button::Context) {
         let pressed = ctx.local.button.is_high().unwrap();
@@ -180,15 +178,13 @@ mod app {
     fn button_pressed(_ctx: button_pressed::Context) {
         rprintln!("button pressed");
     }
-    */
 
     #[task]
-    fn clock_test(ctx: clock_test::Context) {
+    fn clock_test(_ctx: clock_test::Context) {
         rprintln!("TICK");
         clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
     }
 
-    /*
     #[task(shared = [&fonts, display])]
     fn update_display(ctx: update_display::Context) {
         rprintln!("display");
@@ -203,7 +199,6 @@ mod app {
         Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
             .draw(ctx.shared.display)
             .unwrap();
-        //update_display::spawn_after(Milliseconds(500_u32)).unwrap();
+        update_display::spawn_after(Milliseconds(512_u32)).unwrap();
     }
-    */
 }
