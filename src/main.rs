@@ -21,22 +21,25 @@
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
 
+mod rtc_monotonic;
+
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0])]
 mod app {
-    use super::hal;
+    use super::{hal, rtc_monotonic};
     use debouncr::{debounce_6, Debouncer, Edge, Repeat6};
     use display_interface_spi::SPIInterfaceNoCS;
-    use dwt_systick_monotonic::DwtSystick;
     use embedded_graphics::prelude::*;
     use hal::{
-        clocks::{Clocks, HFCLK_FREQ, LFCLK_FREQ},
+        clocks::{Clocks, LfOscConfiguration, HFCLK_FREQ, LFCLK_FREQ},
         gpio::{self, Floating, Input, Level, Output, Pin, PushPull},
-        pac,
+        pac, ppi,
         prelude::*,
+        rtc::RtcInterrupt,
         spim::{self, Spim},
-        timer::Timer,
+        timer::{self, Timer},
     };
     use pinetime_lib::{display, resources::Fonts};
+    use rtc_monotonic::RtcMonotonic;
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
     use st7789::{Orientation, ST7789};
@@ -44,8 +47,10 @@ mod app {
     // TODO - move drawing to module
     use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
 
-    #[monotonic(binds = SysTick, default = true)]
-    type SysTickMono = DwtSystick<HFCLK_FREQ>;
+    const TICK_RATE_HZ: u32 = 1024;
+
+    #[monotonic(binds = RTC1, default = true)]
+    type RtcMono = RtcMonotonic<pac::RTC1, pac::TIMER1, TICK_RATE_HZ>;
 
     #[shared]
     struct Shared {
@@ -69,28 +74,24 @@ mod app {
         rtt_init_print!();
         rprintln!("Initializing");
 
-        let mut dcb = ctx.core.DCB;
-        let dwt = ctx.core.DWT;
-        let systick = ctx.core.SYST;
-
         let hal::pac::Peripherals {
             CLOCK,
             P0,
             SPIM1,
             TIMER0,
+            TIMER1,
+            RTC1,
+            PPI,
             ..
         } = ctx.device;
 
         // Switch to the external HF oscillator for bluetooth
-        let _clocks = Clocks::new(CLOCK).enable_ext_hfosc();
+        // and start the low-power/low-frequency clock for RTCs
+        let clocks = Clocks::new(CLOCK).enable_ext_hfosc().start_lfclk();
         let gpio = gpio::p0::Parts::new(P0);
+        let ppi_channels = ppi::Parts::new(PPI);
 
-        // TODO probably not right
-        // test by toggling backlight or something
-        // getting 244ms instead of 250 with this freq?
-        //
-        // need to just switch to using RTCx peripheral to drive things like infinitime does
-        let mono = DwtSystick::new(&mut dcb, dwt, systick, HFCLK_FREQ);
+        let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
 
         // TODO - disable RADIO for now
 
@@ -103,8 +104,8 @@ mod app {
         let mut bl0 = gpio.p0_14.into_push_pull_output(Level::High).degrade();
         let mut bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
         let mut bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
-        bl0.set_low().unwrap();
-        bl1.set_low().unwrap();
+        //bl0.set_low().unwrap();
+        //bl1.set_low().unwrap();
         //bl2.set_low().unwrap();
 
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
@@ -132,9 +133,9 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        poll_button::spawn().unwrap();
-        update_display::spawn().unwrap();
-        clock_test::spawn_after(Milliseconds(250_u32)).unwrap();
+        //poll_button::spawn().unwrap();
+        //update_display::spawn().unwrap();
+        clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
 
         (
             Shared {
@@ -150,6 +151,7 @@ mod app {
     }
 
     // TODO - don't need for now, use RTCx for scheduler, low-power mode when in idle
+    /*
     #[idle]
     fn idle(_: idle::Context) -> ! {
         rprintln!("idle");
@@ -158,7 +160,9 @@ mod app {
             cortex_m::asm::nop();
         }
     }
+    */
 
+    /*
     #[task(local = [button, button_debouncer])]
     fn poll_button(ctx: poll_button::Context) {
         let pressed = ctx.local.button.is_high().unwrap();
@@ -176,13 +180,15 @@ mod app {
     fn button_pressed(_ctx: button_pressed::Context) {
         rprintln!("button pressed");
     }
+    */
 
     #[task]
-    fn clock_test(_ctx: clock_test::Context) {
+    fn clock_test(ctx: clock_test::Context) {
         rprintln!("TICK");
-        clock_test::spawn_after(Milliseconds(250_u32)).unwrap();
+        clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
     }
 
+    /*
     #[task(shared = [&fonts, display])]
     fn update_display(ctx: update_display::Context) {
         rprintln!("display");
@@ -199,4 +205,5 @@ mod app {
             .unwrap();
         //update_display::spawn_after(Milliseconds(500_u32)).unwrap();
     }
+    */
 }
