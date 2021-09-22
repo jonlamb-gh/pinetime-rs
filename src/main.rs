@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+// helpful links
+//
 // https://github.com/JF002/InfiniTime
 // https://lupyuen.github.io/pinetime-rust-mynewt/articles/timesync
 //
@@ -22,7 +24,7 @@
 // https://github.com/nrf-rs/nrf-hal/blob/master/examples/twis-dma-demo/src/main.rs
 //
 // TODO
-// err_derive patterns
+// some sort of error handling pattern
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
@@ -56,6 +58,7 @@ mod app {
     use st7789::{Orientation, ST7789};
 
     // TODO - move drawing to module
+    // probably a "watchface" thing
     use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
 
     const TICK_RATE_HZ: u32 = 1024;
@@ -99,6 +102,7 @@ mod app {
             PPI,
             GPIOTE,
             TWIM0,
+            RADIO,
             ..
         } = ctx.device;
 
@@ -112,6 +116,13 @@ mod app {
         let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
 
         // TODO - disable RADIO for now
+        RADIO.tasks_txen.write(|w| unsafe { w.bits(0) });
+        RADIO.tasks_rxen.write(|w| unsafe { w.bits(0) });
+        RADIO.tasks_stop.write(|w| unsafe { w.bits(1) });
+        RADIO.tasks_disable.write(|w| unsafe { w.bits(1) });
+        RADIO.tasks_bcstop.write(|w| unsafe { w.bits(1) });
+        RADIO.events_disabled.write(|w| unsafe { w.bits(1) });
+        RADIO.power.write(|w| unsafe { w.bits(0) });
 
         let mut delay = Timer::new(TIMER0);
 
@@ -136,21 +147,27 @@ mod app {
         cst_twim.disable();
         unsafe {
             let twim = pac::TWIM0::ptr();
-            (*twim).frequency.write(|w| w.frequency().bits(0x06200000));
+            (*twim)
+                .frequency
+                .write(|w| w.frequency().bits(cst816s::MAX_FREQUENCY));
         }
         cst_twim.enable();
 
+        // TODO - in release builds, getting Error::AddressNack
+        // probably after controller goes into sleep mode, need to wait for first wakeup interrupt
+        // to init
         let mut touch_controller = Cst816s::new(cst_twim, cst_rst.degrade());
         touch_controller.init(&mut delay).unwrap();
 
+        // TODO - move ownership of GpioteChannel's into respective drivers/impls
         // Setup GPIO events and interrupts
-        // Button generates event on channel 0
+        // Button generates events on channel 0
         gpiote
             .channel0()
             .input_pin(&button)
             .lo_to_hi()
             .enable_interrupt();
-        // CST816S generates event on channel 1
+        // CST816S generates events on channel 1
         gpiote
             .channel1()
             .input_pin(&cst_int.degrade())
@@ -201,36 +218,19 @@ mod app {
         )
     }
 
-    // TODO - don't need for now, use RTCx for scheduler, low-power mode when in idle
-    /*
-    #[idle]
-    fn idle(_: idle::Context) -> ! {
-        rprintln!("idle");
-
-        loop {
-            cortex_m::asm::nop();
-        }
-    }
-    */
-
     #[task(binds = GPIOTE, local = [gpiote])]
     fn gpiote_handler(ctx: gpiote_handler::Context) {
-        //rprintln!("GPIOTE event");
         if ctx.local.gpiote.channel0().is_event_triggered() {
             ctx.local.gpiote.channel0().reset_events();
-            //rprintln!("Interrupt from channel 0 event");
             button_pressed::spawn().unwrap();
         }
         if ctx.local.gpiote.channel1().is_event_triggered() {
             ctx.local.gpiote.channel1().reset_events();
-            //rprintln!("Interrupt from channel 1 event");
             touch_event::spawn().unwrap();
         }
         if ctx.local.gpiote.port().is_event_triggered() {
-            rprintln!("Interrupt from port event");
+            rprintln!("Unexpected interrupt from port event");
         }
-        // Reset all events
-        //ctx.local.gpiote.reset_events();
     }
 
     #[task(local = [backlight])]

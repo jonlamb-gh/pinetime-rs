@@ -20,6 +20,11 @@ use core::fmt;
 /// CST816S I2C address
 pub const ADDRESS: u8 = 0x15;
 
+/// The TWI device should work @ up to 400Khz but there is a HW bug which prevent it from
+/// respecting correct timings. According to erratas heet, this magic value makes it run
+/// at ~390Khz with correct timings.
+pub const MAX_FREQUENCY: u32 = 0x06200000;
+
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[repr(u8)]
 pub enum Gesture {
