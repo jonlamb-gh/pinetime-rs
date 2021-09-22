@@ -12,6 +12,7 @@
 
 use crate::hal::{
     gpio::{p0, Floating, Input, Output, Pin, PushPull},
+    gpiote::GpioteChannel,
     prelude::{OutputPin, _embedded_hal_blocking_delay_DelayMs as DelayMs},
     twim::{self, Error, Twim},
 };
@@ -38,9 +39,11 @@ pub enum Gesture {
 }
 
 impl Gesture {
+    /*
     fn as_u8(self) -> u8 {
         self as u8
     }
+    */
 
     fn from_u8(val: u8) -> Option<Self> {
         use Gesture::*;
@@ -104,12 +107,13 @@ impl fmt::Display for TouchData {
 }
 
 pub type ResetPin = p0::P0_10<Output<PushPull>>;
-pub type IntPin = p0::P0_28<Input<Floating>>;
+pub type InterruptPin = p0::P0_28<Input<Floating>>;
 
 /// CST816S driver
 pub struct Cst816s<TWIM> {
     twim: Twim<TWIM>,
-    reset_pin: Pin<Output<PushPull>>,
+    reset_pin: ResetPin,
+    _int_pin: Pin<Input<Floating>>,
     buffer: [u8; 7],
 }
 
@@ -117,10 +121,18 @@ impl<TWIM> Cst816s<TWIM>
 where
     TWIM: twim::Instance,
 {
-    pub fn new(twim: Twim<TWIM>, reset_pin: Pin<Output<PushPull>>) -> Self {
+    pub fn new(
+        twim: Twim<TWIM>,
+        reset_pin: ResetPin,
+        int_pin: InterruptPin,
+        channel: &GpioteChannel<'_>,
+    ) -> Self {
+        let int_pin = int_pin.degrade();
+        channel.input_pin(&int_pin).lo_to_hi().enable_interrupt();
         Cst816s {
             twim,
             reset_pin,
+            _int_pin: int_pin,
             buffer: [0; 7],
         }
     }

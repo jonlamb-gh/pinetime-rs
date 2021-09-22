@@ -1,5 +1,5 @@
 use crate::hal::{
-    gpio::{Output, Pin, PushPull},
+    gpio::{p0, Output, PushPull},
     prelude::OutputPin,
 };
 use core::fmt;
@@ -91,19 +91,19 @@ impl fmt::Display for Brightness {
     }
 }
 
+pub type LowPin = p0::P0_14<Output<PushPull>>;
+pub type MidPin = p0::P0_22<Output<PushPull>>;
+pub type HighPin = p0::P0_23<Output<PushPull>>;
+
 pub struct Backlight {
-    low: Pin<Output<PushPull>>,
-    mid: Pin<Output<PushPull>>,
-    high: Pin<Output<PushPull>>,
+    low: LowPin,
+    mid: MidPin,
+    high: HighPin,
     brightness: Brightness,
 }
 
 impl Backlight {
-    pub fn new(
-        low: Pin<Output<PushPull>>,
-        mid: Pin<Output<PushPull>>,
-        high: Pin<Output<PushPull>>,
-    ) -> Self {
+    pub fn new(low: LowPin, mid: MidPin, high: HighPin) -> Self {
         let mut backlight = Backlight {
             low,
             mid,

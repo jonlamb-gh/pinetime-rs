@@ -38,8 +38,8 @@ mod app {
     use embedded_graphics::prelude::*;
     use hal::{
         clocks::Clocks,
-        gpio::{self, Floating, Input, Level, Output, Pin, PushPull},
-        gpiote::{Gpiote, GpioteInputPin},
+        gpio::{self, Level, Output, PushPull},
+        gpiote::Gpiote,
         pac, ppi,
         prelude::*,
         spim::{self, Spim},
@@ -48,6 +48,7 @@ mod app {
     };
     use pinetime_lib::{
         backlight::{Backlight, Brightness},
+        button::Button,
         cst816s::{self, Cst816s},
         display,
         resources::FontStyles,
@@ -80,9 +81,9 @@ mod app {
     }
 
     #[local]
-    struct Local {
+    struct Local<'a> {
         gpiote: Gpiote,
-        button: Pin<Input<Floating>>,
+        _button: Button,
         backlight: Backlight,
         touch_controller: Cst816s<pac::TWIM0>,
     }
@@ -126,19 +127,23 @@ mod app {
 
         let mut delay = Timer::new(TIMER0);
 
-        gpio.p0_15.into_push_pull_output(Level::High);
-        let button = gpio.p0_13.into_floating_input().degrade();
+        // Button generates events on GPIOTE channel 0
+        let button = Button::new(
+            gpio.p0_15.into_push_pull_output(Level::High),
+            gpio.p0_13.into_floating_input(),
+            &gpiote.channel0(),
+        );
 
-        let bl0 = gpio.p0_14.into_push_pull_output(Level::High).degrade();
-        let bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
-        let bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
+        let bl0 = gpio.p0_14.into_push_pull_output(Level::High);
+        let bl1 = gpio.p0_22.into_push_pull_output(Level::High);
+        let bl2 = gpio.p0_23.into_push_pull_output(Level::High);
         let mut backlight = Backlight::new(bl0, bl1, bl2);
         backlight.set_brightness(Brightness::Off);
 
         let scl = gpio.p0_07.into_floating_input().degrade();
         let sda = gpio.p0_06.into_floating_input().degrade();
-        let cst_rst: cst816s::ResetPin = gpio.p0_10.into_push_pull_output(Level::High);
-        let cst_int: cst816s::IntPin = gpio.p0_28.into_floating_input();
+        let cst_rst = gpio.p0_10.into_push_pull_output(Level::High);
+        let cst_int: cst816s::InterruptPin = gpio.p0_28.into_floating_input();
         let mut cst_twim = Twim::new(TWIM0, twim::Pins { scl, sda }, Frequency::K400);
 
         // The TWI device should work @ up to 400Khz but there is a HW bug which prevent it from
@@ -156,23 +161,11 @@ mod app {
         // TODO - in release builds, getting Error::AddressNack
         // probably after controller goes into sleep mode, need to wait for first wakeup interrupt
         // to init
-        let mut touch_controller = Cst816s::new(cst_twim, cst_rst.degrade());
-        touch_controller.init(&mut delay).unwrap();
-
-        // TODO - move ownership of GpioteChannel's into respective drivers/impls
-        // Setup GPIO events and interrupts
-        // Button generates events on channel 0
-        gpiote
-            .channel0()
-            .input_pin(&button)
-            .lo_to_hi()
-            .enable_interrupt();
+        //
+        // also setup the watchdog early on, maybe loop here a few times
         // CST816S generates events on channel 1
-        gpiote
-            .channel1()
-            .input_pin(&cst_int.degrade())
-            .lo_to_hi()
-            .enable_interrupt();
+        let mut touch_controller = Cst816s::new(cst_twim, cst_rst, cst_int, &gpiote.channel1());
+        touch_controller.init(&mut delay).unwrap();
 
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
         let spi_mosi = gpio.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -185,9 +178,9 @@ mod app {
         let display_spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
 
         // Display control
-        let mut lcd_cs = gpio.p0_25.into_push_pull_output(Level::Low);
-        let lcd_dc = gpio.p0_18.into_push_pull_output(Level::Low);
-        let lcd_rst = gpio.p0_26.into_push_pull_output(Level::Low);
+        let mut lcd_cs: display::LcdCsPin = gpio.p0_25.into_push_pull_output(Level::Low);
+        let lcd_dc: display::LcdDcPin = gpio.p0_18.into_push_pull_output(Level::Low);
+        let lcd_rst: display::LcdResetPin = gpio.p0_26.into_push_pull_output(Level::Low);
 
         // Hold CS low while driving the display
         lcd_cs.set_low().unwrap();
@@ -210,8 +203,8 @@ mod app {
             },
             Local {
                 gpiote,
-                button,
                 backlight,
+                _button: button,
                 touch_controller,
             },
             init::Monotonics(mono),
@@ -224,6 +217,7 @@ mod app {
             ctx.local.gpiote.channel0().reset_events();
             button_pressed::spawn().unwrap();
         }
+
         if ctx.local.gpiote.channel1().is_event_triggered() {
             ctx.local.gpiote.channel1().reset_events();
             touch_event::spawn().unwrap();
