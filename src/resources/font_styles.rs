@@ -24,15 +24,15 @@ pub const JETBRAINS_FONT_46_POINT_BOLD: MonoFont = MonoFont {
 
 // TODO - rename TextResources or something
 #[derive(Debug)]
-pub struct Fonts {
+pub struct FontStyles {
     pub watchface_time_style: MonoTextStyle<'static, display::PixelFormat>,
 }
 
-unsafe impl Send for Fonts {}
+unsafe impl Send for FontStyles {}
 
-impl Default for Fonts {
+impl Default for FontStyles {
     fn default() -> Self {
-        Fonts {
+        FontStyles {
             watchface_time_style: MonoTextStyleBuilder::new()
                 .font(&JETBRAINS_FONT_46_POINT_BOLD)
                 .text_color(display::PixelFormat::BLUE)

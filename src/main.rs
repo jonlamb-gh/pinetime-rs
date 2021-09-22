@@ -17,6 +17,12 @@
 // https://rtic.rs/dev/book/en/by-example/app.html
 //
 // https://docs.rs/dwt-systick-monotonic/0.1.0-alpha.3/dwt_systick_monotonic/struct.DwtSystick.html
+//
+// rtic dma example
+// https://github.com/nrf-rs/nrf-hal/blob/master/examples/twis-dma-demo/src/main.rs
+//
+// TODO
+// err_derive patterns
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
@@ -25,19 +31,25 @@ mod rtc_monotonic;
 
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0])]
 mod app {
-    use super::{hal, rtc_monotonic};
-    use debouncr::{debounce_6, Debouncer, Edge, Repeat6};
+    use crate::{hal, rtc_monotonic};
     use display_interface_spi::SPIInterfaceNoCS;
     use embedded_graphics::prelude::*;
     use hal::{
         clocks::Clocks,
         gpio::{self, Floating, Input, Level, Output, Pin, PushPull},
+        gpiote::{Gpiote, GpioteInputPin},
         pac, ppi,
         prelude::*,
         spim::{self, Spim},
         timer::Timer,
+        twim::{self, Frequency, Twim},
     };
-    use pinetime_lib::{display, resources::Fonts};
+    use pinetime_lib::{
+        backlight::{Backlight, Brightness},
+        cst816s::{self, Cst816s},
+        display,
+        resources::FontStyles,
+    };
     use rtc_monotonic::RtcMonotonic;
     use rtic::time::duration::Milliseconds;
     use rtt_target::{rprintln, rtt_init_print};
@@ -53,8 +65,10 @@ mod app {
 
     #[shared]
     struct Shared {
-        fonts: Fonts,
+        font_styles: FontStyles,
         // icons
+        delay: Timer<pac::TIMER0>,
+
         #[lock_free]
         display: ST7789<
             SPIInterfaceNoCS<Spim<pac::SPIM1>, gpio::p0::P0_18<Output<PushPull>>>,
@@ -64,8 +78,10 @@ mod app {
 
     #[local]
     struct Local {
+        gpiote: Gpiote,
         button: Pin<Input<Floating>>,
-        button_debouncer: Debouncer<u8, Repeat6>,
+        backlight: Backlight,
+        touch_controller: Cst816s<pac::TWIM0>,
     }
 
     #[init]
@@ -81,6 +97,8 @@ mod app {
             TIMER1,
             RTC1,
             PPI,
+            GPIOTE,
+            TWIM0,
             ..
         } = ctx.device;
 
@@ -88,6 +106,7 @@ mod app {
         // and start the low-power/low-frequency clock for RTCs
         let _clocks = Clocks::new(CLOCK).enable_ext_hfosc().start_lfclk();
         let gpio = gpio::p0::Parts::new(P0);
+        let gpiote = Gpiote::new(GPIOTE);
         let ppi_channels = ppi::Parts::new(PPI);
 
         let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
@@ -99,13 +118,44 @@ mod app {
         gpio.p0_15.into_push_pull_output(Level::High);
         let button = gpio.p0_13.into_floating_input().degrade();
 
-        // TODO backlight
-        let mut bl0 = gpio.p0_14.into_push_pull_output(Level::High).degrade();
-        let mut _bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
-        let mut _bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
-        bl0.set_low().unwrap();
-        //bl1.set_low().unwrap();
-        //bl2.set_low().unwrap();
+        let bl0 = gpio.p0_14.into_push_pull_output(Level::High).degrade();
+        let bl1 = gpio.p0_22.into_push_pull_output(Level::High).degrade();
+        let bl2 = gpio.p0_23.into_push_pull_output(Level::High).degrade();
+        let mut backlight = Backlight::new(bl0, bl1, bl2);
+        backlight.set_brightness(Brightness::Off);
+
+        let scl = gpio.p0_07.into_floating_input().degrade();
+        let sda = gpio.p0_06.into_floating_input().degrade();
+        let cst_rst: cst816s::ResetPin = gpio.p0_10.into_push_pull_output(Level::High);
+        let cst_int: cst816s::IntPin = gpio.p0_28.into_floating_input();
+        let mut cst_twim = Twim::new(TWIM0, twim::Pins { scl, sda }, Frequency::K400);
+
+        // The TWI device should work @ up to 400Khz but there is a HW bug which prevent it from
+        // respecting correct timings. According to erratas heet, this magic value makes it run
+        // at ~390Khz with correct timings.
+        cst_twim.disable();
+        unsafe {
+            let twim = pac::TWIM0::ptr();
+            (*twim).frequency.write(|w| w.frequency().bits(0x06200000));
+        }
+        cst_twim.enable();
+
+        let mut touch_controller = Cst816s::new(cst_twim, cst_rst.degrade());
+        touch_controller.init(&mut delay).unwrap();
+
+        // Setup GPIO events and interrupts
+        // Button generates event on channel 0
+        gpiote
+            .channel0()
+            .input_pin(&button)
+            .lo_to_hi()
+            .enable_interrupt();
+        // CST816S generates event on channel 1
+        gpiote
+            .channel1()
+            .input_pin(&cst_int.degrade())
+            .lo_to_hi()
+            .enable_interrupt();
 
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
         let spi_mosi = gpio.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -115,35 +165,37 @@ mod app {
             miso: Some(spi_miso),
             mosi: Some(spi_mosi),
         };
+        let display_spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
 
+        // Display control
         let mut lcd_cs = gpio.p0_25.into_push_pull_output(Level::Low);
         let lcd_dc = gpio.p0_18.into_push_pull_output(Level::Low);
         let lcd_rst = gpio.p0_26.into_push_pull_output(Level::Low);
 
-        let spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
-
         // Hold CS low while driving the display
         lcd_cs.set_low().unwrap();
 
-        let di = SPIInterfaceNoCS::new(spi, lcd_dc);
+        let di = SPIInterfaceNoCS::new(display_spi, lcd_dc);
         let mut display = ST7789::new(di, lcd_rst, display::WIDTH, display::HEIGHT);
         display.init(&mut delay).unwrap();
         display.set_orientation(Orientation::Portrait).unwrap();
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        poll_button::spawn().unwrap();
         update_display::spawn().unwrap();
-        clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
+        //clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
 
         (
             Shared {
-                fonts: Fonts::default(),
+                font_styles: FontStyles::default(),
+                delay,
                 display,
             },
             Local {
+                gpiote,
                 button,
-                button_debouncer: debounce_6(false),
+                backlight,
+                touch_controller,
             },
             init::Monotonics(mono),
         )
@@ -161,35 +213,47 @@ mod app {
     }
     */
 
-    #[task(local = [button, button_debouncer])]
-    fn poll_button(ctx: poll_button::Context) {
-        let pressed = ctx.local.button.is_high().unwrap();
-        let edge = ctx.local.button_debouncer.update(pressed);
-
-        if edge == Some(Edge::Rising) {
-            // TODO
+    #[task(binds = GPIOTE, local = [gpiote])]
+    fn gpiote_handler(ctx: gpiote_handler::Context) {
+        //rprintln!("GPIOTE event");
+        if ctx.local.gpiote.channel0().is_event_triggered() {
+            ctx.local.gpiote.channel0().reset_events();
+            //rprintln!("Interrupt from channel 0 event");
             button_pressed::spawn().unwrap();
         }
-
-        poll_button::spawn_after(Milliseconds(2_u32)).unwrap();
+        if ctx.local.gpiote.channel1().is_event_triggered() {
+            ctx.local.gpiote.channel1().reset_events();
+            //rprintln!("Interrupt from channel 1 event");
+            touch_event::spawn().unwrap();
+        }
+        if ctx.local.gpiote.port().is_event_triggered() {
+            rprintln!("Interrupt from port event");
+        }
+        // Reset all events
+        //ctx.local.gpiote.reset_events();
     }
 
-    #[task]
-    fn button_pressed(_ctx: button_pressed::Context) {
-        rprintln!("button pressed");
+    #[task(local = [backlight])]
+    fn button_pressed(ctx: button_pressed::Context) {
+        ctx.local.backlight.brighter();
+        rprintln!("button pressed b={}", ctx.local.backlight.brightness());
+        if ctx.local.backlight.brightness() == Brightness::L7 {
+            ctx.local.backlight.set_brightness(Brightness::Off);
+        }
     }
 
-    #[task]
-    fn clock_test(_ctx: clock_test::Context) {
-        rprintln!("TICK");
-        clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
+    #[task(local = [touch_controller])]
+    fn touch_event(ctx: touch_event::Context) {
+        if let Some(touch_data) = ctx.local.touch_controller.read_touch_data() {
+            rprintln!("{}", touch_data);
+        }
     }
 
-    #[task(shared = [&fonts, display])]
+    #[task(shared = [&font_styles, display])]
     fn update_display(ctx: update_display::Context) {
         rprintln!("display");
         let text = "12:12";
-        let font_style = ctx.shared.fonts.watchface_time_style;
+        let font_style = ctx.shared.font_styles.watchface_time_style;
         let text_style = TextStyleBuilder::new()
             .baseline(Baseline::Alphabetic)
             .alignment(Alignment::Center)
@@ -199,6 +263,6 @@ mod app {
         Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
             .draw(ctx.shared.display)
             .unwrap();
-        update_display::spawn_after(Milliseconds(512_u32)).unwrap();
+        //update_display::spawn_after(Milliseconds(512_u32)).unwrap();
     }
 }
