@@ -8,37 +8,26 @@
 //
 // https://github.com/JF002/InfiniTime/pull/595
 //
-// docs
-// https://github.com/JF002/InfiniTime/blob/develop/bootloader/README.md
-// https://github.com/JF002/InfiniTime/blob/develop/doc/MemoryAnalysis.md
-//
-// https://github.com/nrf-rs/nrf-hal/blob/master/examples/rtc-demo/src/main.rs
-// https://github.com/nrf-rs/nrf-hal/tree/master/examples/rtic-demo
-// https://github.com/almindor/st7789-examples/tree/master/examples
-//
-// https://rtic.rs/dev/book/en/by-example/app.html
-//
-// https://docs.rs/dwt-systick-monotonic/0.1.0-alpha.3/dwt_systick_monotonic/struct.DwtSystick.html
-//
 // rtic dma example
 // https://github.com/nrf-rs/nrf-hal/blob/master/examples/twis-dma-demo/src/main.rs
 //
 // TODO
-// some sort of error handling pattern
+// some sort of error handling pattern / resource and priority management
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
 
 mod rtc_monotonic;
 
-#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1])]
+#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2])]
 mod app {
     use crate::{hal, rtc_monotonic};
+    use core::convert::TryFrom;
     use display_interface_spi::SPIInterfaceNoCS;
     use embedded_graphics::prelude::*;
     use hal::{
         clocks::Clocks,
-        gpio::{self, Level, Output, PushPull},
+        gpio::{self, Level},
         gpiote::Gpiote,
         pac, ppi,
         prelude::*,
@@ -66,6 +55,7 @@ mod app {
 
     const TICK_RATE_HZ: u32 = 1024;
 
+    //#[monotonic(binds = RTC1, default = true, priority = 6)]
     #[monotonic(binds = RTC1, default = true)]
     type RtcMono = RtcMonotonic<pac::RTC1, pac::TIMER1, TICK_RATE_HZ>;
 
@@ -76,10 +66,8 @@ mod app {
         _delay: Timer<pac::TIMER0>,
 
         #[lock_free]
-        display: ST7789<
-            SPIInterfaceNoCS<Spim<pac::SPIM1>, gpio::p0::P0_18<Output<PushPull>>>,
-            gpio::p0::P0_26<Output<PushPull>>,
-        >,
+        display:
+            ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, display::LcdDcPin>, display::LcdResetPin>,
 
         #[lock_free]
         motor_controller: MotorController,
@@ -239,6 +227,7 @@ mod app {
     fn gpiote_handler(ctx: gpiote_handler::Context) {
         if ctx.local.gpiote.channel0().is_event_triggered() {
             ctx.local.gpiote.channel0().reset_events();
+            // TODO - use debouncr crate or something to debounce button
             button_pressed::spawn().unwrap();
         }
         if ctx.local.gpiote.channel1().is_event_triggered() {
@@ -247,6 +236,7 @@ mod app {
         }
         if ctx.local.gpiote.channel2().is_event_triggered() {
             ctx.local.gpiote.channel2().reset_events();
+            // TODO - need to debounce this too
             start_ring::spawn(30).ok();
             //start_ring::spawn(30).unwrap();
             poll_battery_controller::spawn().ok();
@@ -275,6 +265,9 @@ mod app {
 
     #[task(local = [battery_controller])]
     fn poll_battery_controller(ctx: poll_battery_controller::Context) {
+        // get current time
+        //let t = monotonics::RtcMono::now();
+
         if ctx.local.battery_controller.update() {
             rprintln!(
                 "BAT c {} p {} v {} p {}",
@@ -287,20 +280,26 @@ mod app {
         poll_battery_controller::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
     }
 
-    #[task(shared = [motor_controller], priority = 5)]
+    #[task(shared = [motor_controller], priority = 2)]
     fn start_ring(ctx: start_ring::Context, duration_ms: u8) {
-        ctx.shared.motor_controller.on();
-        stop_ring::spawn_after(Milliseconds(u32::from(duration_ms))).ok();
+        if !ctx.shared.motor_controller.is_on() {
+            rprintln!("start ring {}", duration_ms);
+            ctx.shared.motor_controller.on();
+            stop_ring::spawn_after(Milliseconds(u32::from(duration_ms))).ok();
+        }
     }
 
-    #[task(shared = [motor_controller], priority = 5)]
+    #[task(shared = [motor_controller], priority = 2)]
     fn stop_ring(ctx: stop_ring::Context) {
+        rprintln!("stop ring");
         ctx.shared.motor_controller.off();
     }
 
-    #[task(shared = [&font_styles, display])]
+    #[task(shared = [&font_styles, display], priority = 5)]
     fn update_display(ctx: update_display::Context) {
-        rprintln!("display");
+        let t = monotonics::RtcMono::now();
+        let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
+        rprintln!("display at {:?}", t);
         let text = "12:12";
         let font_style = ctx.shared.font_styles.watchface_time_style;
         let text_style = TextStyleBuilder::new()
@@ -312,6 +311,6 @@ mod app {
         Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
             .draw(ctx.shared.display)
             .unwrap();
-        //update_display::spawn_after(Milliseconds(512_u32)).unwrap();
+        //update_display::spawn_after(Milliseconds(1000_u32)).unwrap();
     }
 }

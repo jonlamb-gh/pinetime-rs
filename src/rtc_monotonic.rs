@@ -88,6 +88,7 @@ where
 
     const SCALING_FACTOR: Fraction = Fraction::new(1, RTC_FREQ);
 
+    #[inline(always)]
     fn try_now(&self) -> Result<Instant<Self>, Error> {
         Ok(Instant::new(self.timer.read_counter()))
     }
