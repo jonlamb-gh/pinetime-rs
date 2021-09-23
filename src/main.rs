@@ -48,6 +48,7 @@ mod app {
     };
     use pinetime_lib::{
         backlight::{Backlight, Brightness},
+        battery_controller::BatteryController,
         button::Button,
         cst816s::{self, Cst816s},
         display,
@@ -86,6 +87,7 @@ mod app {
         _button: Button,
         backlight: Backlight,
         touch_controller: Cst816s<pac::TWIM0>,
+        battery_controller: BatteryController,
     }
 
     #[init]
@@ -104,6 +106,7 @@ mod app {
             GPIOTE,
             TWIM0,
             RADIO,
+            SAADC,
             ..
         } = ctx.device;
 
@@ -113,6 +116,8 @@ mod app {
         let gpio = gpio::p0::Parts::new(P0);
         let gpiote = Gpiote::new(GPIOTE);
         let ppi_channels = ppi::Parts::new(PPI);
+
+        // TODO - watchdog
 
         let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
 
@@ -165,7 +170,18 @@ mod app {
         // also setup the watchdog early on, maybe loop here a few times
         // CST816S generates events on channel 1
         let mut touch_controller = Cst816s::new(cst_twim, cst_rst, cst_int, &gpiote.channel1());
-        touch_controller.init(&mut delay).unwrap();
+        while touch_controller.init(&mut delay).is_err() {
+            delay.delay_ms(5_u32);
+        }
+
+        // PowerPresence pin generates events on GPIOTE channel 2
+        let battery_controller = BatteryController::new(
+            SAADC,
+            gpio.p0_12.into_floating_input(),
+            gpio.p0_19.into_floating_input(),
+            gpio.p0_31.into_floating_input(),
+            &gpiote.channel2(),
+        );
 
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
         let spi_mosi = gpio.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -192,8 +208,8 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
+        poll_battery_controller::spawn().unwrap();
         update_display::spawn().unwrap();
-        //clock_test::spawn_after(Milliseconds(512_u32)).unwrap();
 
         (
             Shared {
@@ -206,6 +222,7 @@ mod app {
                 backlight,
                 _button: button,
                 touch_controller,
+                battery_controller,
             },
             init::Monotonics(mono),
         )
@@ -217,10 +234,13 @@ mod app {
             ctx.local.gpiote.channel0().reset_events();
             button_pressed::spawn().unwrap();
         }
-
         if ctx.local.gpiote.channel1().is_event_triggered() {
             ctx.local.gpiote.channel1().reset_events();
             touch_event::spawn().unwrap();
+        }
+        if ctx.local.gpiote.channel2().is_event_triggered() {
+            ctx.local.gpiote.channel2().reset_events();
+            poll_battery_controller::spawn().unwrap();
         }
         if ctx.local.gpiote.port().is_event_triggered() {
             rprintln!("Unexpected interrupt from port event");
@@ -241,6 +261,21 @@ mod app {
         if let Some(touch_data) = ctx.local.touch_controller.read_touch_data() {
             rprintln!("{}", touch_data);
         }
+    }
+
+    // TODO rm cap once a handler task is made, just for hacking on power pin events
+    #[task(local = [battery_controller], capacity = 4)]
+    fn poll_battery_controller(ctx: poll_battery_controller::Context) {
+        if ctx.local.battery_controller.update() {
+            rprintln!(
+                "BAT c {} p {} v {} p {}",
+                ctx.local.battery_controller.charging(),
+                ctx.local.battery_controller.power_present(),
+                ctx.local.battery_controller.voltage(),
+                ctx.local.battery_controller.percent_remaining()
+            );
+        }
+        poll_battery_controller::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
     }
 
     #[task(shared = [&font_styles, display])]
