@@ -90,6 +90,7 @@ impl BatteryController {
         self.percent_remaining
     }
 
+    // TODO - return some bitfield of events
     pub fn update(&mut self) -> bool {
         let mut changed = false;
 

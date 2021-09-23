@@ -31,7 +31,7 @@ use panic_rtt_target as _;
 
 mod rtc_monotonic;
 
-#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0])]
+#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1])]
 mod app {
     use crate::{hal, rtc_monotonic};
     use display_interface_spi::SPIInterfaceNoCS;
@@ -52,6 +52,7 @@ mod app {
         button::Button,
         cst816s::{self, Cst816s},
         display,
+        motor_controller::MotorController,
         resources::FontStyles,
     };
     use rtc_monotonic::RtcMonotonic;
@@ -72,13 +73,16 @@ mod app {
     struct Shared {
         font_styles: FontStyles,
         // icons
-        delay: Timer<pac::TIMER0>,
+        _delay: Timer<pac::TIMER0>,
 
         #[lock_free]
         display: ST7789<
             SPIInterfaceNoCS<Spim<pac::SPIM1>, gpio::p0::P0_18<Output<PushPull>>>,
             gpio::p0::P0_26<Output<PushPull>>,
         >,
+
+        #[lock_free]
+        motor_controller: MotorController,
     }
 
     #[local]
@@ -183,6 +187,8 @@ mod app {
             &gpiote.channel2(),
         );
 
+        let motor_controller = MotorController::new(gpio.p0_16.into_push_pull_output(Level::High));
+
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
         let spi_mosi = gpio.p0_03.into_push_pull_output(Level::Low).degrade();
         let spi_miso = gpio.p0_04.into_floating_input().degrade();
@@ -214,8 +220,9 @@ mod app {
         (
             Shared {
                 font_styles: FontStyles::default(),
-                delay,
+                _delay: delay,
                 display,
+                motor_controller,
             },
             Local {
                 gpiote,
@@ -240,7 +247,10 @@ mod app {
         }
         if ctx.local.gpiote.channel2().is_event_triggered() {
             ctx.local.gpiote.channel2().reset_events();
-            poll_battery_controller::spawn().unwrap();
+            start_ring::spawn(30).ok();
+            //start_ring::spawn(30).unwrap();
+            poll_battery_controller::spawn().ok();
+            //poll_battery_controller::spawn().unwrap();
         }
         if ctx.local.gpiote.port().is_event_triggered() {
             rprintln!("Unexpected interrupt from port event");
@@ -263,8 +273,7 @@ mod app {
         }
     }
 
-    // TODO rm cap once a handler task is made, just for hacking on power pin events
-    #[task(local = [battery_controller], capacity = 4)]
+    #[task(local = [battery_controller])]
     fn poll_battery_controller(ctx: poll_battery_controller::Context) {
         if ctx.local.battery_controller.update() {
             rprintln!(
@@ -276,6 +285,17 @@ mod app {
             );
         }
         poll_battery_controller::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
+    }
+
+    #[task(shared = [motor_controller], priority = 5)]
+    fn start_ring(ctx: start_ring::Context, duration_ms: u8) {
+        ctx.shared.motor_controller.on();
+        stop_ring::spawn_after(Milliseconds(u32::from(duration_ms))).ok();
+    }
+
+    #[task(shared = [motor_controller], priority = 5)]
+    fn stop_ring(ctx: stop_ring::Context) {
+        ctx.shared.motor_controller.off();
     }
 
     #[task(shared = [&font_styles, display])]

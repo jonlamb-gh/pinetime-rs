@@ -7,4 +7,5 @@ pub mod battery_controller;
 pub mod button;
 pub mod cst816s;
 pub mod display;
+pub mod motor_controller;
 pub mod resources;
