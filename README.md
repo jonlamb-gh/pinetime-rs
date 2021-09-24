@@ -10,4 +10,5 @@ cargo install probe-run cargo-embed flip-link
 
 ## TODOs
 
+* Redo linker scripts so image goes into the existing bootloader's firmware slot and use the bootloader update procedure
 * Do on-device unit tests with [defmt-test](https://github.com/knurling-rs/defmt/tree/main/firmware/defmt-test)

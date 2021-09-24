@@ -329,7 +329,8 @@ mod app {
         let t = monotonics::RtcMono::now();
         let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
         rprintln!("display at {:?}", t);
-        let text = "12:12";
+
+        let text = "12:10";
         let font_style = ctx.shared.font_styles.watchface_time_style;
         let text_style = TextStyleBuilder::new()
             .baseline(Baseline::Alphabetic)
@@ -340,6 +341,19 @@ mod app {
         Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
             .draw(ctx.shared.display)
             .unwrap();
+
+        let text = "FRI 24 SEP 2021";
+        let font_style = ctx.shared.font_styles.watchface_date_style;
+        let text_style = TextStyleBuilder::new()
+            .baseline(Baseline::Alphabetic)
+            .alignment(Alignment::Center)
+            .build();
+        let pos_x = (display::WIDTH / 2) as i32;
+        let pos_y = (display::HEIGHT / 2) as i32 + 50;
+        Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
+            .draw(ctx.shared.display)
+            .unwrap();
+
         //update_display::spawn_after(Milliseconds(1000_u32)).unwrap();
     }
 }
