@@ -1,4 +1,7 @@
 //! `Monotonic` implementation based on RTC peripheral
+//!
+//! The RTC provides TICK events to the TIMER task via ppi in
+//! addition to handling the COMPARE events for the RTIC timer queue.
 
 use crate::hal::{
     clocks::LFCLK_FREQ,
@@ -10,6 +13,8 @@ use rtic::rtic_monotonic::{
     embedded_time::{clock::Error, fraction::Fraction},
     Clock, Instant, Monotonic,
 };
+
+pub const TICK_RATE_HZ: u32 = 1024;
 
 /// Example:
 /// ```rust

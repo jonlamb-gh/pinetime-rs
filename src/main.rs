@@ -47,7 +47,7 @@ mod app {
         resources::FontStyles,
         watchdog::Watchdog,
     };
-    use rtc_monotonic::RtcMonotonic;
+    use rtc_monotonic::{RtcMonotonic, TICK_RATE_HZ};
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
     use st7789::{Orientation, ST7789};
@@ -55,8 +55,6 @@ mod app {
     // TODO - move drawing to module
     // probably a "watchface" thing
     use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
-
-    const TICK_RATE_HZ: u32 = 1024;
 
     //#[monotonic(binds = RTC1, default = true, priority = 6)]
     #[monotonic(binds = RTC1, default = true)]
