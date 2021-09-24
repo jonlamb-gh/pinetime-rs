@@ -35,7 +35,7 @@ impl Default for FontStyles {
         FontStyles {
             watchface_time_style: MonoTextStyleBuilder::new()
                 .font(&JETBRAINS_FONT_46_POINT_BOLD)
-                .text_color(display::PixelFormat::BLUE)
+                .text_color(display::PixelFormat::WHITE)
                 .build(),
         }
     }

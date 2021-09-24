@@ -1,0 +1,13 @@
+[package]
+name = "display-prototype"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+
+[dependencies.embedded-graphics-simulator]
+version = "0.3"
+features = ["with-sdl"]
+
+[dependencies.pinetime-graphics]
+path = "../../pinetime-graphics"
