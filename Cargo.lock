@@ -506,6 +506,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinetime-drivers"
+version = "0.1.0"
+dependencies = [
+ "cortex-m 0.6.7",
+ "cortex-m-rtic",
+ "nrf52832-hal",
+ "rtt-target",
+]
+
+[[package]]
+name = "pinetime-graphics"
+version = "0.1.0"
+dependencies = [
+ "embedded-graphics",
+ "heapless 0.7.7",
+]
+
+[[package]]
 name = "pinetime-rs"
 version = "0.1.0"
 dependencies = [
@@ -514,10 +532,10 @@ dependencies = [
  "cortex-m-rtic",
  "display-interface",
  "display-interface-spi",
- "embedded-graphics",
- "heapless 0.7.7",
  "nrf52832-hal",
  "panic-rtt-target",
+ "pinetime-drivers",
+ "pinetime-graphics",
  "rtt-target",
  "st7789",
 ]

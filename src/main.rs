@@ -20,13 +20,13 @@ use nrf52832_hal as hal;
 use panic_rtt_target as _;
 
 mod rtc_monotonic;
+mod system_time;
 
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3])]
 mod app {
     use crate::{hal, rtc_monotonic};
     use core::convert::TryFrom;
     use display_interface_spi::SPIInterfaceNoCS;
-    use embedded_graphics::prelude::*;
     use hal::{
         clocks::Clocks,
         gpio::{self, Level},
@@ -37,16 +37,16 @@ mod app {
         timer::Timer,
         twim::{self, Frequency, Twim},
     };
-    use pinetime_lib::{
+    use pinetime_drivers::{
         backlight::{Backlight, Brightness},
         battery_controller::BatteryController,
         button::Button,
         cst816s::{self, Cst816s},
-        display,
+        lcd::{LcdCsPin, LcdDcPin, LcdResetPin},
         motor_controller::MotorController,
-        resources::FontStyles,
         watchdog::Watchdog,
     };
+    use pinetime_graphics::{display, embedded_graphics::prelude::*, font_styles::FontStyles};
     use rtc_monotonic::{RtcMonotonic, TICK_RATE_HZ};
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
@@ -54,7 +54,7 @@ mod app {
 
     // TODO - move drawing to module
     // probably a "watchface" thing
-    use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
+    use pinetime_graphics::embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
 
     //#[monotonic(binds = RTC1, default = true, priority = 6)]
     #[monotonic(binds = RTC1, default = true)]
@@ -68,8 +68,7 @@ mod app {
 
         // Move to local, take a DisplayEvent arg, other tasks can send events to it
         #[lock_free]
-        display:
-            ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, display::LcdDcPin>, display::LcdResetPin>,
+        display: ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, LcdDcPin>, LcdResetPin>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -190,9 +189,9 @@ mod app {
         let display_spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
 
         // Display control
-        let mut lcd_cs: display::LcdCsPin = gpio.p0_25.into_push_pull_output(Level::Low);
-        let lcd_dc: display::LcdDcPin = gpio.p0_18.into_push_pull_output(Level::Low);
-        let lcd_rst: display::LcdResetPin = gpio.p0_26.into_push_pull_output(Level::Low);
+        let mut lcd_cs: LcdCsPin = gpio.p0_25.into_push_pull_output(Level::Low);
+        let lcd_dc: LcdDcPin = gpio.p0_18.into_push_pull_output(Level::Low);
+        let lcd_rst: LcdResetPin = gpio.p0_26.into_push_pull_output(Level::Low);
 
         // Hold CS low while driving the display
         lcd_cs.set_low().unwrap();
