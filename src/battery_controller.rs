@@ -6,6 +6,7 @@ use crate::hal::{
     saadc::{self, Saadc, SaadcConfig},
 };
 use core::fmt;
+use rtic::time::duration::Milliseconds;
 
 /// High = battery, Low = charging.
 pub type ChargeIndicationPin = p0::P0_12<Input<Floating>>;
@@ -18,7 +19,7 @@ pub struct MilliVolts(pub u16);
 
 impl fmt::Display for MilliVolts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{} mV", self.0)
     }
 }
 
@@ -41,6 +42,10 @@ impl BatteryController {
 
     /// Minimum voltage of battery before shutdown (depends on the battery)
     pub const BATTERY_MIN: MilliVolts = MilliVolts(3200);
+
+    pub const POWER_PRESENCE_DEBOUNCE_MS: Milliseconds<u32> = Milliseconds(200);
+
+    pub const CHARGE_EVENT_RING_DURATION: Milliseconds<u32> = Milliseconds(30);
 
     pub fn new(
         adc: pac::SAADC,
@@ -74,12 +79,8 @@ impl BatteryController {
         }
     }
 
-    pub fn charging(&self) -> bool {
-        self.charging
-    }
-
-    pub fn power_present(&self) -> bool {
-        self.power_present
+    pub fn is_charging(&self) -> bool {
+        self.charging || self.power_present
     }
 
     pub fn voltage(&self) -> MilliVolts {
@@ -90,14 +91,14 @@ impl BatteryController {
         self.percent_remaining
     }
 
-    // TODO - return some bitfield of events
-    pub fn update(&mut self) -> bool {
+    pub fn update_charging_io(&mut self) -> bool {
         let mut changed = false;
 
         let charging = self.charge_indication_pin.is_low().unwrap();
         if charging != self.charging {
             self.charging = charging;
-            changed = true;
+            // Only notify if power present changes
+            //changed = true;
         }
 
         let power_present = self.power_presence_pin.is_low().unwrap();
@@ -106,11 +107,17 @@ impl BatteryController {
             changed = true;
         }
 
+        changed
+    }
+
+    pub fn update_voltage(&mut self) -> bool {
+        let mut changed = false;
+
         let voltage_raw = self
             .adc
             .read(&mut self.voltage_pin)
             .unwrap_or(0)
-            .clamp(0, i16::MAX) as u16;
+            .clamp(0, i16::MAX) as u32;
         let voltage = Self::raw_voltage_to_volts(voltage_raw);
         if voltage != self.voltage {
             self.voltage = voltage;
@@ -129,13 +136,20 @@ impl BatteryController {
         changed
     }
 
+    /// Returns (ChargingStatusChanged, VoltageChanged)
+    pub fn update(&mut self) -> (bool, bool) {
+        let charging_changed = self.update_charging_io();
+        let voltage_changed = self.update_voltage();
+        (charging_changed, voltage_changed)
+    }
+
     /// A hardware voltage divider divides the battery voltage by 2
     /// ADC gain is 1/4
     /// thus adc_voltage = battery_voltage / 2 * gain = battery_voltage / 8
     /// reference_voltage is 600mV
     /// p_event->data.done.p_buffer[0] = (adc_voltage / reference_voltage) * 1024
-    fn raw_voltage_to_volts(raw: u16) -> MilliVolts {
-        let mv = u32::from(raw) * (8 * 600) / 1024;
+    fn raw_voltage_to_volts(raw: u32) -> MilliVolts {
+        let mv = raw * (8 * 600) / 1024;
         MilliVolts(mv as u16)
     }
 }

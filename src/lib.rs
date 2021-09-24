@@ -9,3 +9,4 @@ pub mod cst816s;
 pub mod display;
 pub mod motor_controller;
 pub mod resources;
+pub mod watchdog;

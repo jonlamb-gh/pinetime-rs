@@ -4,7 +4,9 @@
 // helpful links
 //
 // https://github.com/JF002/InfiniTime
+// https://github.com/JF002/InfiniTime/blob/develop/src/components/datetime/DateTimeController.cpp
 // https://lupyuen.github.io/pinetime-rust-mynewt/articles/timesync
+// https://github.com/JF002/InfiniTime/blob/136d4bb85e36777f0f9877fd065476ba1c02ca90/src/FreeRTOS/port_cmsis_systick.c
 //
 // https://github.com/JF002/InfiniTime/pull/595
 //
@@ -19,7 +21,7 @@ use panic_rtt_target as _;
 
 mod rtc_monotonic;
 
-#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2])]
+#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3])]
 mod app {
     use crate::{hal, rtc_monotonic};
     use core::convert::TryFrom;
@@ -43,9 +45,10 @@ mod app {
         display,
         motor_controller::MotorController,
         resources::FontStyles,
+        watchdog::Watchdog,
     };
     use rtc_monotonic::RtcMonotonic;
-    use rtic::time::duration::Milliseconds;
+    use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
     use st7789::{Orientation, ST7789};
 
@@ -65,9 +68,13 @@ mod app {
         // icons
         _delay: Timer<pac::TIMER0>,
 
+        // Move to local, take a DisplayEvent arg, other tasks can send events to it
         #[lock_free]
         display:
             ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, display::LcdDcPin>, display::LcdResetPin>,
+
+        #[lock_free]
+        battery_controller: BatteryController,
 
         #[lock_free]
         motor_controller: MotorController,
@@ -76,10 +83,10 @@ mod app {
     #[local]
     struct Local<'a> {
         gpiote: Gpiote,
-        _button: Button,
+        button: Button,
         backlight: Backlight,
         touch_controller: Cst816s<pac::TWIM0>,
-        battery_controller: BatteryController,
+        watchdog: Watchdog,
     }
 
     #[init]
@@ -99,6 +106,7 @@ mod app {
             TWIM0,
             RADIO,
             SAADC,
+            WDT,
             ..
         } = ctx.device;
 
@@ -109,7 +117,7 @@ mod app {
         let gpiote = Gpiote::new(GPIOTE);
         let ppi_channels = ppi::Parts::new(PPI);
 
-        // TODO - watchdog
+        let watchdog = Watchdog::new(WDT);
 
         let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
 
@@ -124,6 +132,8 @@ mod app {
 
         let mut delay = Timer::new(TIMER0);
 
+        let motor_controller = MotorController::new(gpio.p0_16.into_push_pull_output(Level::High));
+
         // Button generates events on GPIOTE channel 0
         let button = Button::new(
             gpio.p0_15.into_push_pull_output(Level::High),
@@ -135,7 +145,7 @@ mod app {
         let bl1 = gpio.p0_22.into_push_pull_output(Level::High);
         let bl2 = gpio.p0_23.into_push_pull_output(Level::High);
         let mut backlight = Backlight::new(bl0, bl1, bl2);
-        backlight.set_brightness(Brightness::Off);
+        backlight.set_brightness(Brightness::L7);
 
         let scl = gpio.p0_07.into_floating_input().degrade();
         let sda = gpio.p0_06.into_floating_input().degrade();
@@ -155,11 +165,6 @@ mod app {
         }
         cst_twim.enable();
 
-        // TODO - in release builds, getting Error::AddressNack
-        // probably after controller goes into sleep mode, need to wait for first wakeup interrupt
-        // to init
-        //
-        // also setup the watchdog early on, maybe loop here a few times
         // CST816S generates events on channel 1
         let mut touch_controller = Cst816s::new(cst_twim, cst_rst, cst_int, &gpiote.channel1());
         while touch_controller.init(&mut delay).is_err() {
@@ -167,15 +172,14 @@ mod app {
         }
 
         // PowerPresence pin generates events on GPIOTE channel 2
-        let battery_controller = BatteryController::new(
+        let mut battery_controller = BatteryController::new(
             SAADC,
             gpio.p0_12.into_floating_input(),
             gpio.p0_19.into_floating_input(),
             gpio.p0_31.into_floating_input(),
             &gpiote.channel2(),
         );
-
-        let motor_controller = MotorController::new(gpio.p0_16.into_push_pull_output(Level::High));
+        battery_controller.update();
 
         let spi_clk = gpio.p0_02.into_push_pull_output(Level::Low).degrade();
         let spi_mosi = gpio.p0_03.into_push_pull_output(Level::Low).degrade();
@@ -202,7 +206,8 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        poll_battery_controller::spawn().unwrap();
+        watchdog_petter::spawn().unwrap();
+        poll_battery_status::spawn().unwrap();
         update_display::spawn().unwrap();
 
         (
@@ -210,50 +215,60 @@ mod app {
                 font_styles: FontStyles::default(),
                 _delay: delay,
                 display,
+                battery_controller,
                 motor_controller,
             },
             Local {
                 gpiote,
                 backlight,
-                _button: button,
+                button,
                 touch_controller,
-                battery_controller,
+                watchdog,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(binds = GPIOTE, local = [gpiote])]
+    #[task(local = [watchdog], priority = 4)]
+    fn watchdog_petter(ctx: watchdog_petter::Context) {
+        ctx.local.watchdog.pet();
+        watchdog_petter::spawn_after(Seconds(1_u32)).unwrap();
+    }
+
+    #[task(binds = GPIOTE, local = [gpiote], priority = 3)]
     fn gpiote_handler(ctx: gpiote_handler::Context) {
         if ctx.local.gpiote.channel0().is_event_triggered() {
             ctx.local.gpiote.channel0().reset_events();
-            // TODO - use debouncr crate or something to debounce button
-            button_pressed::spawn().unwrap();
+            poll_button::spawn_after(Button::DEBOUNCE_MS).ok();
         }
         if ctx.local.gpiote.channel1().is_event_triggered() {
             ctx.local.gpiote.channel1().reset_events();
-            touch_event::spawn().unwrap();
+            touch_event::spawn().ok();
         }
         if ctx.local.gpiote.channel2().is_event_triggered() {
             ctx.local.gpiote.channel2().reset_events();
-            // TODO - need to debounce this too
-            start_ring::spawn(30).ok();
-            //start_ring::spawn(30).unwrap();
-            poll_battery_controller::spawn().ok();
-            //poll_battery_controller::spawn().unwrap();
+            poll_battery_io::spawn().ok();
         }
         if ctx.local.gpiote.port().is_event_triggered() {
             rprintln!("Unexpected interrupt from port event");
         }
     }
 
+    #[task(local = [button])]
+    fn poll_button(ctx: poll_button::Context) {
+        if ctx.local.button.is_pressed() {
+            button_pressed::spawn().ok();
+        }
+    }
+
     #[task(local = [backlight])]
     fn button_pressed(ctx: button_pressed::Context) {
-        ctx.local.backlight.brighter();
-        rprintln!("button pressed b={}", ctx.local.backlight.brightness());
         if ctx.local.backlight.brightness() == Brightness::L7 {
             ctx.local.backlight.set_brightness(Brightness::Off);
+        } else {
+            ctx.local.backlight.brighter();
         }
+        rprintln!("button pressed b={}", ctx.local.backlight.brightness());
     }
 
     #[task(local = [touch_controller])]
@@ -263,29 +278,46 @@ mod app {
         }
     }
 
-    #[task(local = [battery_controller])]
-    fn poll_battery_controller(ctx: poll_battery_controller::Context) {
-        // get current time
-        //let t = monotonics::RtcMono::now();
-
-        if ctx.local.battery_controller.update() {
+    // TODO - consider starting/resetting a timer here instead, and checking after it expires
+    #[task(shared = [battery_controller])]
+    fn poll_battery_io(ctx: poll_battery_io::Context) {
+        if ctx.shared.battery_controller.update_charging_io() {
             rprintln!(
-                "BAT c {} p {} v {} p {}",
-                ctx.local.battery_controller.charging(),
-                ctx.local.battery_controller.power_present(),
-                ctx.local.battery_controller.voltage(),
-                ctx.local.battery_controller.percent_remaining()
+                "PBIO c {} v {} p {}",
+                ctx.shared.battery_controller.is_charging(),
+                ctx.shared.battery_controller.voltage(),
+                ctx.shared.battery_controller.percent_remaining()
+            );
+            start_ring::spawn_after(
+                BatteryController::POWER_PRESENCE_DEBOUNCE_MS,
+                BatteryController::CHARGE_EVENT_RING_DURATION,
+            )
+            .ok();
+        }
+    }
+
+    #[task(shared = [battery_controller])]
+    fn poll_battery_status(ctx: poll_battery_status::Context) {
+        let (charging_changed, voltage_changed) = ctx.shared.battery_controller.update();
+
+        if charging_changed || voltage_changed {
+            rprintln!(
+                "PBS c {} v {} p {}",
+                ctx.shared.battery_controller.is_charging(),
+                ctx.shared.battery_controller.voltage(),
+                ctx.shared.battery_controller.percent_remaining()
             );
         }
-        poll_battery_controller::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
+
+        poll_battery_status::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
     }
 
     #[task(shared = [motor_controller], priority = 2)]
-    fn start_ring(ctx: start_ring::Context, duration_ms: u8) {
+    fn start_ring(ctx: start_ring::Context, duration: Milliseconds<u32>) {
         if !ctx.shared.motor_controller.is_on() {
-            rprintln!("start ring {}", duration_ms);
+            rprintln!("start ring {}", duration);
             ctx.shared.motor_controller.on();
-            stop_ring::spawn_after(Milliseconds(u32::from(duration_ms))).ok();
+            stop_ring::spawn_after(duration).ok();
         }
     }
 
