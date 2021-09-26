@@ -46,7 +46,12 @@ mod app {
         motor_controller::MotorController,
         watchdog::Watchdog,
     };
-    use pinetime_graphics::{display, embedded_graphics::prelude::*, font_styles::FontStyles};
+    use pinetime_graphics::{
+        display,
+        embedded_graphics::prelude::*,
+        font_styles::FontStyles,
+        icons::{Icon, Icons},
+    };
     use rtc_monotonic::{RtcMonotonic, TICK_RATE_HZ};
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
@@ -54,7 +59,10 @@ mod app {
 
     // TODO - move drawing to module
     // probably a "watchface" thing
-    use pinetime_graphics::embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
+    use pinetime_graphics::embedded_graphics::{
+        mono_font::MonoTextStyleBuilder,
+        text::{Alignment, Baseline, Text, TextStyleBuilder},
+    };
 
     //#[monotonic(binds = RTC1, default = true, priority = 6)]
     #[monotonic(binds = RTC1, default = true)]
@@ -63,7 +71,8 @@ mod app {
     #[shared]
     struct Shared {
         font_styles: FontStyles,
-        // icons
+        icons: Icons,
+
         _delay: Timer<pac::TIMER0>,
 
         // Move to local, take a DisplayEvent arg, other tasks can send events to it
@@ -205,11 +214,14 @@ mod app {
 
         watchdog_petter::spawn().unwrap();
         poll_battery_status::spawn().unwrap();
-        update_display::spawn().unwrap();
+        draw_main_display::spawn().unwrap();
+        draw_battery_charge_indicator::spawn(battery_controller.is_charging()).unwrap();
+        draw_battery_indicator::spawn(battery_controller.percent_remaining()).unwrap();
 
         (
             Shared {
                 font_styles: FontStyles::default(),
+                icons: Icons::default(),
                 _delay: delay,
                 display,
                 battery_controller,
@@ -285,11 +297,14 @@ mod app {
                 ctx.shared.battery_controller.voltage(),
                 ctx.shared.battery_controller.percent_remaining()
             );
+
             start_ring::spawn_after(
                 BatteryController::POWER_PRESENCE_DEBOUNCE_MS,
                 BatteryController::CHARGE_EVENT_RING_DURATION,
             )
             .ok();
+
+            draw_battery_charge_indicator::spawn(ctx.shared.battery_controller.is_charging()).ok();
         }
     }
 
@@ -306,7 +321,11 @@ mod app {
             );
         }
 
-        poll_battery_status::spawn_after(Milliseconds(5 * 1024_u32)).unwrap();
+        if voltage_changed {
+            draw_battery_indicator::spawn(ctx.shared.battery_controller.percent_remaining()).ok();
+        }
+
+        poll_battery_status::spawn_after(Milliseconds(30 * 1024_u32)).unwrap();
     }
 
     #[task(shared = [motor_controller], priority = 2)]
@@ -325,7 +344,7 @@ mod app {
     }
 
     #[task(shared = [&font_styles, display], priority = 5)]
-    fn update_display(ctx: update_display::Context) {
+    fn draw_main_display(ctx: draw_main_display::Context) {
         let t = monotonics::RtcMono::now();
         let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
         rprintln!("display at {:?}", t);
@@ -354,6 +373,57 @@ mod app {
             .draw(ctx.shared.display)
             .unwrap();
 
-        //update_display::spawn_after(Milliseconds(1000_u32)).unwrap();
+        //draw_main_display::spawn_after(Milliseconds(1000_u32)).unwrap();
+    }
+
+    #[task(shared = [&icons, display], priority = 5)]
+    fn draw_battery_indicator(ctx: draw_battery_indicator::Context, percent_remaining: u8) {
+        let icon = match percent_remaining {
+            p if p > 87 => Icon::BatteryFull,
+            p if p > 62 => Icon::BatteryThreeQuarter,
+            p if p > 37 => Icon::BatteryHalf,
+            p if p > 12 => Icon::BatteryOneQuarter,
+            _ => Icon::BatteryEmpty,
+        };
+        rprintln!("draw battery ind {} {:?}", percent_remaining, icon);
+        let color = if icon == Icon::BatteryEmpty {
+            display::PixelFormat::RED
+        } else {
+            display::PixelFormat::WHITE
+        };
+
+        let icon_style = MonoTextStyleBuilder::new()
+            .font(ctx.shared.icons.p20)
+            .text_color(color)
+            .build();
+        let pos_x = display::WIDTH - 30;
+        let pos_y = 20;
+        Text::new(icon.as_text(), Point::new(pos_x as _, pos_y), icon_style)
+            .draw(ctx.shared.display)
+            .unwrap();
+    }
+
+    #[task(shared = [&icons, display], priority = 5)]
+    fn draw_battery_charge_indicator(ctx: draw_battery_charge_indicator::Context, charging: bool) {
+        rprintln!("draw charge ind {}", charging);
+        let color = if charging {
+            display::PixelFormat::RED
+        } else {
+            display::BACKGROUND_COLOR
+        };
+
+        let icon_style = MonoTextStyleBuilder::new()
+            .font(ctx.shared.icons.p20)
+            .text_color(color)
+            .build();
+        let pos_x = display::WIDTH - 55;
+        let pos_y = 22;
+        Text::new(
+            Icon::Plug.as_text(),
+            Point::new(pos_x as _, pos_y),
+            icon_style,
+        )
+        .draw(ctx.shared.display)
+        .unwrap();
     }
 }

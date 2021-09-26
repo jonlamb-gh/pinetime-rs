@@ -3,6 +3,11 @@
 //! The RTC provides TICK events to the TIMER task via ppi in
 //! addition to handling the COMPARE events for the RTIC timer queue.
 
+// TODO - revisit this, probably just use the RTC for ticks, 24 bits of ticks
+// is probably fine
+// use absolute val in set_compare no need to use rel duration
+// https://rtic.rs/dev/book/en/by-example/tips_monotonic_impl.html
+
 use crate::hal::{
     clocks::LFCLK_FREQ,
     ppi::{ConfigurablePpi, Ppi, Ppi3},

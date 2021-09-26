@@ -11,6 +11,7 @@ exclude = [
 members = [
     "pinetime-drivers",
     "pinetime-graphics",
+    "host-tools/icon-font-gen",
     "host-tools/display-prototype",
 ]
 

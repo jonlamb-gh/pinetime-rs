@@ -1,0 +1,11 @@
+[package]
+name = "icon-font-gen"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+structopt = "0.3"
+font-kit = "0.1"
+euclid = "0.19"
+image = "0.23"
+itertools = "0.10"
