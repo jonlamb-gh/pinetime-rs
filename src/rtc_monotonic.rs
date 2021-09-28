@@ -20,20 +20,21 @@ use rtic::rtic_monotonic::{
 };
 
 pub const TICK_RATE_HZ: u32 = 1024;
+/// Using TIMERx to count ticks, 32 bit
+pub const MAX_TICKS: u32 = 0xFFFF_FFFF;
 
 /// Example:
 /// ```rust
-/// const TICK_RATE_HZ: u32 = 1024;
 /// #[monotonic(binds = TIMERx, default = true)]
-/// type RtcMono = RtcMonotonic<RTCx, TIMERx, TICK_RATE_HZ>;
+/// type RtcMono = RtcMonotonic<RTCx, TIMERx>;
 /// ```
-pub struct RtcMonotonic<RTC: rtc::Instance, TIM: timer::Instance, const RTC_FREQ: u32> {
+pub struct RtcMonotonic<RTC: rtc::Instance, TIM: timer::Instance> {
     rtc: Rtc<RTC>,
     timer: TIM,
     _ppi: Ppi3,
 }
 
-impl<RTC, TIM, const RTC_FREQ: u32> RtcMonotonic<RTC, TIM, RTC_FREQ>
+impl<RTC, TIM> RtcMonotonic<RTC, TIM>
 where
     RTC: rtc::Instance,
     TIM: timer::Instance,
@@ -70,7 +71,7 @@ where
 
         // LFCLK_FREQ = 32768 Hz
         // fRTC = 32_768 / (prescaler + 1 )
-        let prescaler = (LFCLK_FREQ / RTC_FREQ) - 1;
+        let prescaler = (LFCLK_FREQ / TICK_RATE_HZ) - 1;
         let mut rtc = Rtc::new(rtc, prescaler)?;
 
         // NOTE: the counter is started in the `reset` method
@@ -89,14 +90,14 @@ where
     }
 }
 
-impl<RTC, TIM, const RTC_FREQ: u32> Clock for RtcMonotonic<RTC, TIM, RTC_FREQ>
+impl<RTC, TIM> Clock for RtcMonotonic<RTC, TIM>
 where
     RTC: rtc::Instance,
     TIM: timer::Instance,
 {
     type T = u32;
 
-    const SCALING_FACTOR: Fraction = Fraction::new(1, RTC_FREQ);
+    const SCALING_FACTOR: Fraction = Fraction::new(1, TICK_RATE_HZ);
 
     #[inline(always)]
     fn try_now(&self) -> Result<Instant<Self>, Error> {
@@ -104,7 +105,7 @@ where
     }
 }
 
-impl<RTC, TIM, const RTC_FREQ: u32> Monotonic for RtcMonotonic<RTC, TIM, RTC_FREQ>
+impl<RTC, TIM> Monotonic for RtcMonotonic<RTC, TIM>
 where
     RTC: rtc::Instance,
     TIM: timer::Instance,

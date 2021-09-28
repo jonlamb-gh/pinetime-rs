@@ -24,8 +24,9 @@ mod system_time;
 
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3])]
 mod app {
-    use crate::{hal, rtc_monotonic};
-    use core::convert::TryFrom;
+    use crate::{hal, rtc_monotonic, system_time};
+    use chrono::Timelike;
+    use core::fmt::Write;
     use display_interface_spi::SPIInterfaceNoCS;
     use hal::{
         clocks::Clocks,
@@ -37,6 +38,7 @@ mod app {
         timer::Timer,
         twim::{self, Frequency, Twim},
     };
+    use heapless::String;
     use pinetime_drivers::{
         backlight::{Backlight, Brightness},
         battery_controller::BatteryController,
@@ -52,10 +54,11 @@ mod app {
         font_styles::FontStyles,
         icons::{Icon, Icons},
     };
-    use rtc_monotonic::{RtcMonotonic, TICK_RATE_HZ};
+    use rtc_monotonic::RtcMonotonic;
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
     use st7789::{Orientation, ST7789};
+    use system_time::SystemTime;
 
     // TODO - move drawing to module
     // probably a "watchface" thing
@@ -64,9 +67,8 @@ mod app {
         text::{Alignment, Baseline, Text, TextStyleBuilder},
     };
 
-    //#[monotonic(binds = RTC1, default = true, priority = 6)]
     #[monotonic(binds = RTC1, default = true)]
-    type RtcMono = RtcMonotonic<pac::RTC1, pac::TIMER1, TICK_RATE_HZ>;
+    type RtcMono = RtcMonotonic<pac::RTC1, pac::TIMER1>;
 
     #[shared]
     struct Shared {
@@ -75,9 +77,15 @@ mod app {
 
         _delay: Timer<pac::TIMER0>,
 
+        #[lock_free]
+        system_time: SystemTime<pac::RTC1, pac::TIMER1>,
+
         // Move to local, take a DisplayEvent arg, other tasks can send events to it
         #[lock_free]
         display: ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, LcdDcPin>, LcdResetPin>,
+
+        #[lock_free]
+        display_string: String<128>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -126,6 +134,7 @@ mod app {
         let watchdog = Watchdog::new(WDT);
 
         let mono = RtcMonotonic::new(RTC1, TIMER1, ppi_channels.ppi3).unwrap();
+        let system_time = SystemTime::new();
 
         // TODO - disable RADIO for now
         RADIO.tasks_txen.write(|w| unsafe { w.bits(0) });
@@ -213,6 +222,7 @@ mod app {
         display.clear(display::PixelFormat::BLACK).unwrap();
 
         watchdog_petter::spawn().unwrap();
+        update_system_time::spawn().unwrap();
         poll_battery_status::spawn().unwrap();
         draw_main_display::spawn().unwrap();
         draw_battery_charge_indicator::spawn(battery_controller.is_charging()).unwrap();
@@ -223,7 +233,9 @@ mod app {
                 font_styles: FontStyles::default(),
                 icons: Icons::default(),
                 _delay: delay,
+                system_time,
                 display,
+                display_string: String::new(),
                 battery_controller,
                 motor_controller,
             },
@@ -242,6 +254,28 @@ mod app {
     fn watchdog_petter(ctx: watchdog_petter::Context) {
         ctx.local.watchdog.pet();
         watchdog_petter::spawn_after(Seconds(1_u32)).unwrap();
+    }
+
+    #[task(shared = [system_time], priority = 5)]
+    fn update_system_time(ctx: update_system_time::Context) {
+        let sys_time = ctx.shared.system_time;
+        sys_time.update_time(monotonics::now());
+
+        /*
+        let t = monotonics::now();
+        let d = t.duration_since_epoch();
+        let ticks = d.integer();
+        let ms = Milliseconds::<u32>::try_from(d).unwrap();
+        rprintln!("t = {}, ms = {}", ticks, ms);
+
+        ctx.shared.system_time.update_time(t);
+        let dt = ctx.shared.system_time.date_time();
+        let time = dt.time();
+        rprintln!("ut {}", ctx.shared.system_time.uptime());
+        rprintln!("{}:{}:{}", time.hour(), time.minute(), time.second());
+        */
+
+        update_system_time::spawn_after(Seconds(1_u32)).unwrap();
     }
 
     #[task(binds = GPIOTE, local = [gpiote], priority = 3)]
@@ -343,26 +377,42 @@ mod app {
         ctx.shared.motor_controller.off();
     }
 
-    #[task(shared = [&font_styles, display], priority = 5)]
+    #[task(shared = [&font_styles, display, display_string, system_time], priority = 5)]
     fn draw_main_display(ctx: draw_main_display::Context) {
-        let t = monotonics::RtcMono::now();
-        let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
-        rprintln!("display at {:?}", t);
+        let sys_time = ctx.shared.system_time;
+        let font_styles = ctx.shared.font_styles;
+        let display = ctx.shared.display;
+        let display_string = ctx.shared.display_string;
 
-        let text = "12:10";
-        let font_style = ctx.shared.font_styles.watchface_time_style;
+        //let t = monotonics::now();
+        //let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
+        //rprintln!("display at {:?}", t);
+
+        let dt = sys_time.date_time();
+        let t = dt.time();
+        display_string.clear();
+        write!(display_string, "{:02}:{:02}", t.minute(), t.second()).unwrap();
+        //write!(display_string, "{}:{}", t.hour(), t.minute()).unwrap();
+
+        let mut font_style = font_styles.watchface_time_style;
+        font_style.background_color = display::BACKGROUND_COLOR.into();
         let text_style = TextStyleBuilder::new()
             .baseline(Baseline::Alphabetic)
             .alignment(Alignment::Center)
             .build();
         let pos_x = (display::WIDTH / 2) as i32;
         let pos_y = (display::HEIGHT / 2) as i32;
-        Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
-            .draw(ctx.shared.display)
-            .unwrap();
+        Text::with_text_style(
+            display_string,
+            Point::new(pos_x, pos_y),
+            font_style,
+            text_style,
+        )
+        .draw(display)
+        .unwrap();
 
         let text = "FRI 24 SEP 2021";
-        let font_style = ctx.shared.font_styles.watchface_date_style;
+        let font_style = font_styles.watchface_date_style;
         let text_style = TextStyleBuilder::new()
             .baseline(Baseline::Alphabetic)
             .alignment(Alignment::Center)
@@ -370,10 +420,10 @@ mod app {
         let pos_x = (display::WIDTH / 2) as i32;
         let pos_y = (display::HEIGHT / 2) as i32 + 50;
         Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
-            .draw(ctx.shared.display)
+            .draw(display)
             .unwrap();
 
-        //draw_main_display::spawn_after(Milliseconds(1000_u32)).unwrap();
+        draw_main_display::spawn_after(Seconds(1_u32)).unwrap();
     }
 
     #[task(shared = [&icons, display], priority = 5)]
