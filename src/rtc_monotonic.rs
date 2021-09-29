@@ -10,6 +10,7 @@
 
 use crate::hal::{
     clocks::LFCLK_FREQ,
+    pac,
     ppi::{ConfigurablePpi, Ppi, Ppi3},
     rtc::{self, Rtc, RtcCompareReg, RtcInterrupt},
     timer,
@@ -22,6 +23,8 @@ use rtic::rtic_monotonic::{
 pub const TICK_RATE_HZ: u32 = 1024;
 /// Using TIMERx to count ticks, 32 bit
 pub const MAX_TICKS: u32 = 0xFFFF_FFFF;
+
+pub type Rtc1Monotonic = RtcMonotonic<pac::RTC1, pac::TIMER1>;
 
 /// Example:
 /// ```rust

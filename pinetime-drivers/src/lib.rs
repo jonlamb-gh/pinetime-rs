@@ -2,6 +2,10 @@
 
 use nrf52832_hal as hal;
 
+pub use display_interface;
+pub use display_interface_spi;
+pub use st7789;
+
 pub mod backlight;
 pub mod battery_controller;
 pub mod button;

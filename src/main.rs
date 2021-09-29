@@ -25,9 +25,6 @@ mod system_time;
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3])]
 mod app {
     use crate::{hal, rtc_monotonic, system_time};
-    use chrono::Timelike;
-    use core::fmt::Write;
-    use display_interface_spi::SPIInterfaceNoCS;
     use hal::{
         clocks::Clocks,
         gpio::{self, Level},
@@ -38,14 +35,15 @@ mod app {
         timer::Timer,
         twim::{self, Frequency, Twim},
     };
-    use heapless::String;
     use pinetime_drivers::{
         backlight::{Backlight, Brightness},
         battery_controller::BatteryController,
         button::Button,
         cst816s::{self, Cst816s},
+        display_interface_spi::SPIInterfaceNoCS,
         lcd::{LcdCsPin, LcdDcPin, LcdResetPin},
         motor_controller::MotorController,
+        st7789::{Orientation, ST7789},
         watchdog::Watchdog,
     };
     use pinetime_graphics::{
@@ -53,22 +51,19 @@ mod app {
         embedded_graphics::prelude::*,
         font_styles::FontStyles,
         icons::{Icon, Icons},
+        screens::{WatchFace, WatchFaceResources},
     };
-    use rtc_monotonic::RtcMonotonic;
+    use rtc_monotonic::{Rtc1Monotonic, RtcMonotonic};
     use rtic::time::duration::{Milliseconds, Seconds};
     use rtt_target::{rprintln, rtt_init_print};
-    use st7789::{Orientation, ST7789};
     use system_time::SystemTime;
 
     // TODO - move drawing to module
     // probably a "watchface" thing
-    use pinetime_graphics::embedded_graphics::{
-        mono_font::MonoTextStyleBuilder,
-        text::{Alignment, Baseline, Text, TextStyleBuilder},
-    };
+    use pinetime_graphics::embedded_graphics::{mono_font::MonoTextStyleBuilder, text::Text};
 
     #[monotonic(binds = RTC1, default = true)]
-    type RtcMono = RtcMonotonic<pac::RTC1, pac::TIMER1>;
+    type RtcMono = Rtc1Monotonic;
 
     #[shared]
     struct Shared {
@@ -81,11 +76,11 @@ mod app {
         system_time: SystemTime<pac::RTC1, pac::TIMER1>,
 
         // Move to local, take a DisplayEvent arg, other tasks can send events to it
+        // DisplayEvent::Refresh
+        // DisplayEvent::ChargeInd(bool) or whatev
+        // ...
         #[lock_free]
         display: ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, LcdDcPin>, LcdResetPin>,
-
-        #[lock_free]
-        display_string: String<128>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -101,6 +96,8 @@ mod app {
         backlight: Backlight,
         touch_controller: Cst816s<pac::TWIM0>,
         watchdog: Watchdog,
+        // TODO
+        watch_face: WatchFace,
     }
 
     #[init]
@@ -221,6 +218,9 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
+        // TODO
+        let watch_face = WatchFace::new();
+
         watchdog_petter::spawn().unwrap();
         update_system_time::spawn().unwrap();
         poll_battery_status::spawn().unwrap();
@@ -235,7 +235,6 @@ mod app {
                 _delay: delay,
                 system_time,
                 display,
-                display_string: String::new(),
                 battery_controller,
                 motor_controller,
             },
@@ -245,6 +244,7 @@ mod app {
                 button,
                 touch_controller,
                 watchdog,
+                watch_face,
             },
             init::Monotonics(mono),
         )
@@ -252,6 +252,9 @@ mod app {
 
     #[task(local = [watchdog], priority = 4)]
     fn watchdog_petter(ctx: watchdog_petter::Context) {
+        //let t = monotonics::now();
+        //let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
+        //rprintln!("wdt {:?}", t);
         ctx.local.watchdog.pet();
         watchdog_petter::spawn_after(Seconds(1_u32)).unwrap();
     }
@@ -377,52 +380,18 @@ mod app {
         ctx.shared.motor_controller.off();
     }
 
-    #[task(shared = [&font_styles, display, display_string, system_time], priority = 5)]
+    #[task(local = [watch_face], shared = [&font_styles, &icons, display, system_time], priority = 5)]
     fn draw_main_display(ctx: draw_main_display::Context) {
-        let sys_time = ctx.shared.system_time;
-        let font_styles = ctx.shared.font_styles;
         let display = ctx.shared.display;
-        let display_string = ctx.shared.display_string;
+        let screen = ctx.local.watch_face;
+        let res = WatchFaceResources {
+            sys_time: ctx.shared.system_time,
+            font_styles: ctx.shared.font_styles,
+            icons: ctx.shared.icons,
+        };
+        screen.refresh(display, &res);
 
-        //let t = monotonics::now();
-        //let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
-        //rprintln!("display at {:?}", t);
-
-        let dt = sys_time.date_time();
-        let t = dt.time();
-        display_string.clear();
-        write!(display_string, "{:02}:{:02}", t.minute(), t.second()).unwrap();
-        //write!(display_string, "{}:{}", t.hour(), t.minute()).unwrap();
-
-        let mut font_style = font_styles.watchface_time_style;
-        font_style.background_color = display::BACKGROUND_COLOR.into();
-        let text_style = TextStyleBuilder::new()
-            .baseline(Baseline::Alphabetic)
-            .alignment(Alignment::Center)
-            .build();
-        let pos_x = (display::WIDTH / 2) as i32;
-        let pos_y = (display::HEIGHT / 2) as i32;
-        Text::with_text_style(
-            display_string,
-            Point::new(pos_x, pos_y),
-            font_style,
-            text_style,
-        )
-        .draw(display)
-        .unwrap();
-
-        let text = "FRI 24 SEP 2021";
-        let font_style = font_styles.watchface_date_style;
-        let text_style = TextStyleBuilder::new()
-            .baseline(Baseline::Alphabetic)
-            .alignment(Alignment::Center)
-            .build();
-        let pos_x = (display::WIDTH / 2) as i32;
-        let pos_y = (display::HEIGHT / 2) as i32 + 50;
-        Text::with_text_style(text, Point::new(pos_x, pos_y), font_style, text_style)
-            .draw(display)
-            .unwrap();
-
+        // TODO refresh 20ms
         draw_main_display::spawn_after(Seconds(1_u32)).unwrap();
     }
 

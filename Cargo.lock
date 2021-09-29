@@ -1220,13 +1220,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinetime-common"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+]
+
+[[package]]
 name = "pinetime-drivers"
 version = "0.1.0"
 dependencies = [
  "cortex-m 0.6.7",
  "cortex-m-rtic",
+ "display-interface",
+ "display-interface-spi",
  "nrf52832-hal",
  "rtt-target",
+ "st7789",
 ]
 
 [[package]]
@@ -1235,25 +1245,23 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "heapless",
+ "pinetime-common",
 ]
 
 [[package]]
 name = "pinetime-rs"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "cortex-m 0.6.7",
  "cortex-m-rt",
  "cortex-m-rtic",
- "display-interface",
- "display-interface-spi",
  "heapless",
  "nrf52832-hal",
  "panic-rtt-target",
+ "pinetime-common",
  "pinetime-drivers",
  "pinetime-graphics",
  "rtt-target",
- "st7789",
 ]
 
 [[package]]

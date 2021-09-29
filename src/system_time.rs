@@ -2,7 +2,10 @@
 
 use crate::hal::{rtc, timer};
 use crate::rtc_monotonic::{RtcMonotonic, MAX_TICKS, TICK_RATE_HZ};
-use chrono::{Duration, NaiveDateTime};
+use pinetime_common::{
+    chrono::{Duration, NaiveDateTime},
+    SystemTimeExt,
+};
 use rtic::time::{duration::Seconds, Instant};
 
 pub struct SystemTime<RTC: rtc::Instance, TIM: timer::Instance> {
@@ -56,5 +59,15 @@ where
 
     pub fn date_time(&self) -> &NaiveDateTime {
         &self.date_time
+    }
+}
+
+impl<RTC, TIM> SystemTimeExt for SystemTime<RTC, TIM>
+where
+    RTC: rtc::Instance,
+    TIM: timer::Instance,
+{
+    fn date_time(&self) -> &NaiveDateTime {
+        SystemTime::date_time(self)
     }
 }

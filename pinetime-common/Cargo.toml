@@ -1,0 +1,10 @@
+[package]
+name = "pinetime-common"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+
+[dependencies.chrono]
+version = "0.4"
+default-features = false
