@@ -22,3 +22,6 @@ default-features = false
 version = "0.6"
 features = ["graphics", "batch", "buffer"]
 default-features = false
+
+[dependencies.pinetime-common]
+path = "../pinetime-common"

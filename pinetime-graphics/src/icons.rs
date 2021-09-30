@@ -26,6 +26,16 @@ impl Icon {
             BatteryThreeQuarter => "\u{F241}",
         }
     }
+
+    pub fn battery_icon_from_percent_remaining(percent_remaining: u8) -> Self {
+        match percent_remaining {
+            p if p > 87 => Icon::BatteryFull,
+            p if p > 62 => Icon::BatteryThreeQuarter,
+            p if p > 37 => Icon::BatteryHalf,
+            p if p > 12 => Icon::BatteryOneQuarter,
+            _ => Icon::BatteryEmpty,
+        }
+    }
 }
 
 const GLYPH_MAPPING: StrGlyphMapping =

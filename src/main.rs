@@ -8,13 +8,19 @@
 // https://lupyuen.github.io/pinetime-rust-mynewt/articles/timesync
 // https://github.com/JF002/InfiniTime/blob/136d4bb85e36777f0f9877fd065476ba1c02ca90/src/FreeRTOS/port_cmsis_systick.c
 //
+// probably do something similar:
 // https://github.com/JF002/InfiniTime/pull/595
-//
-// rtic dma example
-// https://github.com/nrf-rs/nrf-hal/blob/master/examples/twis-dma-demo/src/main.rs
 //
 // TODO
 // some sort of error handling pattern / resource and priority management
+//
+// flash fs
+// https://github.com/jonas-schievink/spi-memory (not maintained?)
+// https://github.com/tock/tock/tree/master/libraries/tickv
+// see the mem map in
+// https://github.com/JF002/pinetime-mcuboot-bootloader
+//
+// embed firmware/crate version somewhere
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
@@ -50,7 +56,7 @@ mod app {
         display,
         embedded_graphics::prelude::*,
         font_styles::FontStyles,
-        icons::{Icon, Icons},
+        icons::Icons,
         screens::{WatchFace, WatchFaceResources},
     };
     use rtc_monotonic::{Rtc1Monotonic, RtcMonotonic};
@@ -58,9 +64,7 @@ mod app {
     use rtt_target::{rprintln, rtt_init_print};
     use system_time::SystemTime;
 
-    // TODO - move drawing to module
-    // probably a "watchface" thing
-    use pinetime_graphics::embedded_graphics::{mono_font::MonoTextStyleBuilder, text::Text};
+    const SCREEN_REFRESH_INTERVAL: Milliseconds = Milliseconds(20_u32);
 
     #[monotonic(binds = RTC1, default = true)]
     type RtcMono = Rtc1Monotonic;
@@ -71,6 +75,9 @@ mod app {
         icons: Icons,
 
         _delay: Timer<pac::TIMER0>,
+
+        #[lock_free]
+        button: Button,
 
         #[lock_free]
         system_time: SystemTime<pac::RTC1, pac::TIMER1>,
@@ -92,7 +99,6 @@ mod app {
     #[local]
     struct Local<'a> {
         gpiote: Gpiote,
-        button: Button,
         backlight: Backlight,
         touch_controller: Cst816s<pac::TWIM0>,
         watchdog: Watchdog,
@@ -218,21 +224,18 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        // TODO
         let watch_face = WatchFace::new();
 
         watchdog_petter::spawn().unwrap();
         update_system_time::spawn().unwrap();
-        poll_battery_status::spawn().unwrap();
-        draw_main_display::spawn().unwrap();
-        draw_battery_charge_indicator::spawn(battery_controller.is_charging()).unwrap();
-        draw_battery_indicator::spawn(battery_controller.percent_remaining()).unwrap();
+        draw_screen::spawn().unwrap();
 
         (
             Shared {
                 font_styles: FontStyles::default(),
                 icons: Icons::default(),
                 _delay: delay,
+                button,
                 system_time,
                 display,
                 battery_controller,
@@ -241,7 +244,6 @@ mod app {
             Local {
                 gpiote,
                 backlight,
-                button,
                 touch_controller,
                 watchdog,
                 watch_face,
@@ -250,12 +252,35 @@ mod app {
         )
     }
 
-    #[task(local = [watchdog], priority = 4)]
+    #[task(binds = GPIOTE, local = [gpiote], priority = 3)]
+    fn gpiote_handler(ctx: gpiote_handler::Context) {
+        if ctx.local.gpiote.channel0().is_event_triggered() {
+            ctx.local.gpiote.channel0().reset_events();
+            poll_button::spawn_after(Button::DEBOUNCE_MS).ok();
+        }
+        if ctx.local.gpiote.channel1().is_event_triggered() {
+            ctx.local.gpiote.channel1().reset_events();
+            touch_event::spawn().ok();
+        }
+        if ctx.local.gpiote.channel2().is_event_triggered() {
+            ctx.local.gpiote.channel2().reset_events();
+            poll_battery_io::spawn().ok();
+        }
+        if ctx.local.gpiote.port().is_event_triggered() {
+            rprintln!("Unexpected interrupt from port event");
+        }
+    }
+
+    #[task(local = [watchdog], shared = [button], priority = 4)]
     fn watchdog_petter(ctx: watchdog_petter::Context) {
         //let t = monotonics::now();
         //let t = Milliseconds::<u32>::try_from(t.duration_since_epoch()).unwrap();
         //rprintln!("wdt {:?}", t);
-        ctx.local.watchdog.pet();
+
+        // Holding the button down will eventually trip the watchdog and reset
+        if !ctx.shared.button.is_pressed() {
+            ctx.local.watchdog.pet();
+        }
         watchdog_petter::spawn_after(Seconds(1_u32)).unwrap();
     }
 
@@ -281,28 +306,9 @@ mod app {
         update_system_time::spawn_after(Seconds(1_u32)).unwrap();
     }
 
-    #[task(binds = GPIOTE, local = [gpiote], priority = 3)]
-    fn gpiote_handler(ctx: gpiote_handler::Context) {
-        if ctx.local.gpiote.channel0().is_event_triggered() {
-            ctx.local.gpiote.channel0().reset_events();
-            poll_button::spawn_after(Button::DEBOUNCE_MS).ok();
-        }
-        if ctx.local.gpiote.channel1().is_event_triggered() {
-            ctx.local.gpiote.channel1().reset_events();
-            touch_event::spawn().ok();
-        }
-        if ctx.local.gpiote.channel2().is_event_triggered() {
-            ctx.local.gpiote.channel2().reset_events();
-            poll_battery_io::spawn().ok();
-        }
-        if ctx.local.gpiote.port().is_event_triggered() {
-            rprintln!("Unexpected interrupt from port event");
-        }
-    }
-
-    #[task(local = [button])]
+    #[task(shared = [button], priority = 4)]
     fn poll_button(ctx: poll_button::Context) {
-        if ctx.local.button.is_pressed() {
+        if ctx.shared.button.is_pressed() {
             button_pressed::spawn().ok();
         }
     }
@@ -325,7 +331,7 @@ mod app {
     }
 
     // TODO - consider starting/resetting a timer here instead, and checking after it expires
-    #[task(shared = [battery_controller])]
+    #[task(shared = [battery_controller], priority = 5)]
     fn poll_battery_io(ctx: poll_battery_io::Context) {
         if ctx.shared.battery_controller.update_charging_io() {
             rprintln!(
@@ -340,29 +346,7 @@ mod app {
                 BatteryController::CHARGE_EVENT_RING_DURATION,
             )
             .ok();
-
-            draw_battery_charge_indicator::spawn(ctx.shared.battery_controller.is_charging()).ok();
         }
-    }
-
-    #[task(shared = [battery_controller])]
-    fn poll_battery_status(ctx: poll_battery_status::Context) {
-        let (charging_changed, voltage_changed) = ctx.shared.battery_controller.update();
-
-        if charging_changed || voltage_changed {
-            rprintln!(
-                "PBS c {} v {} p {}",
-                ctx.shared.battery_controller.is_charging(),
-                ctx.shared.battery_controller.voltage(),
-                ctx.shared.battery_controller.percent_remaining()
-            );
-        }
-
-        if voltage_changed {
-            draw_battery_indicator::spawn(ctx.shared.battery_controller.percent_remaining()).ok();
-        }
-
-        poll_battery_status::spawn_after(Milliseconds(30 * 1024_u32)).unwrap();
     }
 
     #[task(shared = [motor_controller], priority = 2)]
@@ -380,69 +364,20 @@ mod app {
         ctx.shared.motor_controller.off();
     }
 
-    #[task(local = [watch_face], shared = [&font_styles, &icons, display, system_time], priority = 5)]
-    fn draw_main_display(ctx: draw_main_display::Context) {
+    #[task(local = [watch_face], shared = [&font_styles, &icons, display, system_time, battery_controller], priority = 5)]
+    fn draw_screen(ctx: draw_screen::Context) {
+        ctx.shared.battery_controller.update();
+
         let display = ctx.shared.display;
         let screen = ctx.local.watch_face;
         let res = WatchFaceResources {
-            sys_time: ctx.shared.system_time,
             font_styles: ctx.shared.font_styles,
             icons: ctx.shared.icons,
+            sys_time: ctx.shared.system_time,
+            bat_ctl: ctx.shared.battery_controller,
         };
-        screen.refresh(display, &res);
+        screen.refresh(display, &res).unwrap();
 
-        // TODO refresh 20ms
-        draw_main_display::spawn_after(Seconds(1_u32)).unwrap();
-    }
-
-    #[task(shared = [&icons, display], priority = 5)]
-    fn draw_battery_indicator(ctx: draw_battery_indicator::Context, percent_remaining: u8) {
-        let icon = match percent_remaining {
-            p if p > 87 => Icon::BatteryFull,
-            p if p > 62 => Icon::BatteryThreeQuarter,
-            p if p > 37 => Icon::BatteryHalf,
-            p if p > 12 => Icon::BatteryOneQuarter,
-            _ => Icon::BatteryEmpty,
-        };
-        rprintln!("draw battery ind {} {:?}", percent_remaining, icon);
-        let color = if icon == Icon::BatteryEmpty {
-            display::PixelFormat::RED
-        } else {
-            display::PixelFormat::WHITE
-        };
-
-        let icon_style = MonoTextStyleBuilder::new()
-            .font(ctx.shared.icons.p20)
-            .text_color(color)
-            .build();
-        let pos_x = display::WIDTH - 30;
-        let pos_y = 20;
-        Text::new(icon.as_text(), Point::new(pos_x as _, pos_y), icon_style)
-            .draw(ctx.shared.display)
-            .unwrap();
-    }
-
-    #[task(shared = [&icons, display], priority = 5)]
-    fn draw_battery_charge_indicator(ctx: draw_battery_charge_indicator::Context, charging: bool) {
-        rprintln!("draw charge ind {}", charging);
-        let color = if charging {
-            display::PixelFormat::RED
-        } else {
-            display::BACKGROUND_COLOR
-        };
-
-        let icon_style = MonoTextStyleBuilder::new()
-            .font(ctx.shared.icons.p20)
-            .text_color(color)
-            .build();
-        let pos_x = display::WIDTH - 55;
-        let pos_y = 22;
-        Text::new(
-            Icon::Plug.as_text(),
-            Point::new(pos_x as _, pos_y),
-            icon_style,
-        )
-        .draw(ctx.shared.display)
-        .unwrap();
+        draw_screen::spawn_after(SCREEN_REFRESH_INTERVAL).unwrap();
     }
 }

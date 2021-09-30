@@ -622,6 +622,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "err-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcc7f65832b62ed38939f98966824eb6294911c3629b0e9a262bfb80836d9686"
+dependencies = [
+ "proc-macro-error",
+ "proc-macro2 1.0.29",
+ "quote 1.0.9",
+ "rustversion",
+ "syn 1.0.77",
+ "synstructure",
+]
+
+[[package]]
 name = "euclid"
 version = "0.19.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1235,6 +1249,7 @@ dependencies = [
  "display-interface",
  "display-interface-spi",
  "nrf52832-hal",
+ "pinetime-common",
  "rtt-target",
  "st7789",
 ]
@@ -1244,6 +1259,7 @@ name = "pinetime-graphics"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics",
+ "err-derive",
  "heapless",
  "pinetime-common",
 ]
@@ -1621,6 +1637,12 @@ checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
  "semver 1.0.4",
 ]
+
+[[package]]
+name = "rustversion"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61b3909d758bb75c79f23d4736fac9433868679d3ad2ea7a61e3c25cfda9a088"
 
 [[package]]
 name = "same-file"

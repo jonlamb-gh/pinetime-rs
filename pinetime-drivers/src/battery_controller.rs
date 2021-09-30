@@ -5,23 +5,13 @@ use crate::hal::{
     prelude::{InputPin, _embedded_hal_adc_OneShot as OneShot},
     saadc::{self, Saadc, SaadcConfig},
 };
-use core::fmt;
+use pinetime_common::{BatteryControllerExt, MilliVolts};
 use rtic::time::duration::Milliseconds;
 
 /// High = battery, Low = charging.
 pub type ChargeIndicationPin = p0::P0_12<Input<Floating>>;
 pub type VoltagePin = p0::P0_31<Input<Floating>>;
 pub type PowerPresencePin = p0::P0_19<Input<Floating>>;
-
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-#[repr(transparent)]
-pub struct MilliVolts(pub u16);
-
-impl fmt::Display for MilliVolts {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} mV", self.0)
-    }
-}
 
 pub struct BatteryController {
     adc: Saadc,
@@ -151,5 +141,19 @@ impl BatteryController {
     fn raw_voltage_to_volts(raw: u32) -> MilliVolts {
         let mv = raw * (8 * 600) / 1024;
         MilliVolts(mv as u16)
+    }
+}
+
+impl BatteryControllerExt for BatteryController {
+    fn is_charging(&self) -> bool {
+        BatteryController::is_charging(self)
+    }
+
+    fn voltage(&self) -> MilliVolts {
+        BatteryController::voltage(self)
+    }
+
+    fn percent_remaining(&self) -> u8 {
+        BatteryController::percent_remaining(self)
     }
 }

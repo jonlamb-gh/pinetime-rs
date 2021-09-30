@@ -14,6 +14,16 @@ pub struct SystemTime<RTC: rtc::Instance, TIM: timer::Instance> {
     date_time: NaiveDateTime,
 }
 
+impl<RTC, TIM> Default for SystemTime<RTC, TIM>
+where
+    RTC: rtc::Instance,
+    TIM: timer::Instance,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<RTC, TIM> SystemTime<RTC, TIM>
 where
     RTC: rtc::Instance,
