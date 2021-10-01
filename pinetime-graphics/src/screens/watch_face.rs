@@ -193,6 +193,7 @@ impl WatchFace {
             let icon_style = MonoTextStyleBuilder::new()
                 .font(res.icons.p20)
                 .text_color(color)
+                .background_color(BACKGROUND_COLOR)
                 .build();
             let pos_x = display::WIDTH - 30;
             let pos_y = 20;

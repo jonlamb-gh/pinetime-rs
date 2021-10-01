@@ -3,6 +3,7 @@ use crate::hal::{
     pac::WDT,
     wdt::{self, Parts, Watchdog as HalWatchdog, WatchdogHandle},
 };
+use rtic::time::duration::Milliseconds;
 use rtt_target::rprintln;
 
 pub struct Watchdog {
@@ -11,6 +12,7 @@ pub struct Watchdog {
 
 impl Watchdog {
     pub const PERIOD: u32 = 3 * LFCLK_FREQ;
+    pub const PER_INTERVAL_MS: Milliseconds<u32> = Milliseconds(500);
 
     pub fn new(wdt: WDT) -> Self {
         // In case the watchdog is already running, just spin and let it expire, since

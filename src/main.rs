@@ -21,6 +21,7 @@
 // https://github.com/JF002/pinetime-mcuboot-bootloader
 //
 // embed firmware/crate version somewhere
+// https://crates.io/crates/built
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
@@ -140,6 +141,13 @@ mod app {
         let system_time = SystemTime::new();
 
         // TODO - disable RADIO for now
+        // eventually make an enum for variants
+        // UnInit(pac-devices)
+        // Init(drivers)
+        // ...
+        // disabled on boot, enabled on-demand when the transport is needed
+        // then reboot or button to turn it back off, only want the radio
+        // on when needed
         RADIO.tasks_txen.write(|w| unsafe { w.bits(0) });
         RADIO.tasks_rxen.write(|w| unsafe { w.bits(0) });
         RADIO.tasks_stop.write(|w| unsafe { w.bits(1) });
@@ -228,6 +236,7 @@ mod app {
 
         watchdog_petter::spawn().unwrap();
         update_system_time::spawn().unwrap();
+        poll_battery_voltage::spawn().unwrap();
         draw_screen::spawn().unwrap();
 
         (
@@ -281,7 +290,7 @@ mod app {
         if !ctx.shared.button.is_pressed() {
             ctx.local.watchdog.pet();
         }
-        watchdog_petter::spawn_after(Seconds(1_u32)).unwrap();
+        watchdog_petter::spawn_after(Watchdog::PER_INTERVAL_MS).unwrap();
     }
 
     #[task(shared = [system_time], priority = 5)]
@@ -349,6 +358,12 @@ mod app {
         }
     }
 
+    #[task(shared = [battery_controller], priority = 5)]
+    fn poll_battery_voltage(ctx: poll_battery_voltage::Context) {
+        ctx.shared.battery_controller.update_voltage();
+        poll_battery_voltage::spawn_after(BatteryController::VOLTAGE_POLL_INTERVAL_MS).unwrap();
+    }
+
     #[task(shared = [motor_controller], priority = 2)]
     fn start_ring(ctx: start_ring::Context, duration: Milliseconds<u32>) {
         if !ctx.shared.motor_controller.is_on() {
@@ -366,8 +381,6 @@ mod app {
 
     #[task(local = [watch_face], shared = [&font_styles, &icons, display, system_time, battery_controller], priority = 5)]
     fn draw_screen(ctx: draw_screen::Context) {
-        ctx.shared.battery_controller.update();
-
         let display = ctx.shared.display;
         let screen = ctx.local.watch_face;
         let res = WatchFaceResources {

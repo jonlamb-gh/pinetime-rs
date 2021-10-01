@@ -33,6 +33,8 @@ impl BatteryController {
     /// Minimum voltage of battery before shutdown (depends on the battery)
     pub const BATTERY_MIN: MilliVolts = MilliVolts(3200);
 
+    pub const VOLTAGE_POLL_INTERVAL_MS: Milliseconds<u32> = Milliseconds(5000);
+
     pub const POWER_PRESENCE_DEBOUNCE_MS: Milliseconds<u32> = Milliseconds(200);
 
     pub const CHARGE_EVENT_RING_DURATION: Milliseconds<u32> = Milliseconds(30);
