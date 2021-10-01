@@ -47,7 +47,7 @@ mod app {
         battery_controller::BatteryController,
         button::Button,
         cst816s::{self, Cst816s},
-        display_interface_spi::SPIInterfaceNoCS,
+        display_interface_spi::SPIInterface,
         lcd::{LcdCsPin, LcdDcPin, LcdResetPin},
         motor_controller::MotorController,
         st7789::{Orientation, ST7789},
@@ -88,7 +88,7 @@ mod app {
         // DisplayEvent::ChargeInd(bool) or whatev
         // ...
         #[lock_free]
-        display: ST7789<SPIInterfaceNoCS<Spim<pac::SPIM1>, LcdDcPin>, LcdResetPin>,
+        display: ST7789<SPIInterface<Spim<pac::SPIM1>, LcdDcPin, LcdCsPin>, LcdResetPin>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -218,14 +218,11 @@ mod app {
         let display_spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
 
         // Display control
-        let mut lcd_cs: LcdCsPin = gpio.p0_25.into_push_pull_output(Level::Low);
+        let lcd_cs: LcdCsPin = gpio.p0_25.into_push_pull_output(Level::High);
         let lcd_dc: LcdDcPin = gpio.p0_18.into_push_pull_output(Level::Low);
         let lcd_rst: LcdResetPin = gpio.p0_26.into_push_pull_output(Level::Low);
 
-        // Hold CS low while driving the display
-        lcd_cs.set_low().unwrap();
-
-        let di = SPIInterfaceNoCS::new(display_spi, lcd_dc);
+        let di = SPIInterface::new(display_spi, lcd_dc, lcd_cs);
         let mut display = ST7789::new(di, lcd_rst, display::WIDTH, display::HEIGHT);
         display.init(&mut delay).unwrap();
         display.set_orientation(Orientation::Portrait).unwrap();
