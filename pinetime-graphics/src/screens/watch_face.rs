@@ -15,7 +15,7 @@ use embedded_graphics::{
 use heapless::String;
 use pinetime_common::{
     chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike},
-    BatteryControllerExt, SystemTimeExt,
+    err_derive, BatteryControllerExt, SystemTimeExt,
 };
 
 const MONTHS: [&str; 12] = [

@@ -8,3 +8,7 @@ edition = "2018"
 [dependencies.chrono]
 version = "0.4"
 default-features = false
+
+[dependencies.err-derive]
+version = "0.3"
+default-features = false

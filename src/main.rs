@@ -88,7 +88,7 @@ mod app {
         // DisplayEvent::ChargeInd(bool) or whatev
         // ...
         #[lock_free]
-        display: ST7789<SPIInterface<Spim<pac::SPIM1>, LcdDcPin, LcdCsPin>, LcdResetPin>,
+        display: ST7789<SPIInterface<Spim<pac::SPIM0>, LcdDcPin, LcdCsPin>, LcdResetPin>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -101,9 +101,8 @@ mod app {
     struct Local<'a> {
         gpiote: Gpiote,
         backlight: Backlight,
-        touch_controller: Cst816s<pac::TWIM0>,
+        touch_controller: Cst816s<pac::TWIM1>,
         watchdog: Watchdog,
-        // TODO
         watch_face: WatchFace,
     }
 
@@ -115,13 +114,13 @@ mod app {
         let hal::pac::Peripherals {
             CLOCK,
             P0,
-            SPIM1,
+            SPIM0,
             TIMER0,
             TIMER1,
             RTC1,
             PPI,
             GPIOTE,
-            TWIM0,
+            TWIM1,
             RADIO,
             SAADC,
             WDT,
@@ -177,7 +176,7 @@ mod app {
         let sda = gpio.p0_06.into_floating_input().degrade();
         let cst_rst = gpio.p0_10.into_push_pull_output(Level::High);
         let cst_int: cst816s::InterruptPin = gpio.p0_28.into_floating_input();
-        let mut cst_twim = Twim::new(TWIM0, twim::Pins { scl, sda }, Frequency::K400);
+        let mut cst_twim = Twim::new(TWIM1, twim::Pins { scl, sda }, Frequency::K400);
 
         // The TWI device should work @ up to 400Khz but there is a HW bug which prevent it from
         // respecting correct timings. According to erratas heet, this magic value makes it run
@@ -215,7 +214,7 @@ mod app {
             miso: Some(spi_miso),
             mosi: Some(spi_mosi),
         };
-        let display_spi = Spim::new(SPIM1, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
+        let display_spi = Spim::new(SPIM0, spi_pins, spim::Frequency::M8, spim::MODE_3, 0);
 
         // Display control
         let lcd_cs: LcdCsPin = gpio.p0_25.into_push_pull_output(Level::High);

@@ -21,14 +21,14 @@ name = "pinetime"
 path = "src/main.rs"
 
 [dependencies]
-cortex-m = "0.6"
-cortex-m-rt = "0.6"
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
 cortex-m-rtic = "0.6.0-rc.2"
 #rubble =
 #rubble-nrf5x =
 
 [dependencies.nrf52832-hal]
-version = "0.13"
+version = "0.14"
 features = ["rt"]
 default-features = false
 
