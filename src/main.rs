@@ -29,9 +29,10 @@ use panic_rtt_target as _;
 mod rtc_monotonic;
 mod system_time;
 
-#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3])]
+#[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4])]
 mod app {
     use crate::{hal, rtc_monotonic, system_time};
+    use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
     use hal::{
         clocks::Clocks,
         gpio::{self, Level},
@@ -66,6 +67,7 @@ mod app {
     use system_time::SystemTime;
 
     const SCREEN_REFRESH_INTERVAL: Milliseconds = Milliseconds(20_u32);
+    const DISPLAY_TIMEOUT: Seconds = Seconds(10_u32);
 
     #[monotonic(binds = RTC1, default = true)]
     type RtcMono = Rtc1Monotonic;
@@ -74,6 +76,7 @@ mod app {
     struct Shared {
         font_styles: FontStyles,
         icons: Icons,
+        display_active: AtomicBool,
 
         _delay: Timer<pac::TIMER0>,
 
@@ -82,6 +85,9 @@ mod app {
 
         #[lock_free]
         system_time: SystemTime<pac::RTC1, pac::TIMER1>,
+
+        #[lock_free]
+        backlight: Backlight,
 
         // Move to local, take a DisplayEvent arg, other tasks can send events to it
         // DisplayEvent::Refresh
@@ -100,7 +106,7 @@ mod app {
     #[local]
     struct Local<'a> {
         gpiote: Gpiote,
-        backlight: Backlight,
+        //backligh_timer: Timer<pac::TIMER0>,
         touch_controller: Cst816s<pac::TWIM1>,
         watchdog: Watchdog,
         watch_face: WatchFace,
@@ -170,7 +176,7 @@ mod app {
         let bl1 = gpio.p0_22.into_push_pull_output(Level::High);
         let bl2 = gpio.p0_23.into_push_pull_output(Level::High);
         let mut backlight = Backlight::new(bl0, bl1, bl2);
-        backlight.set_brightness(Brightness::L7);
+        backlight.set_brightness(Brightness::Off);
 
         let scl = gpio.p0_07.into_floating_input().degrade();
         let sda = gpio.p0_06.into_floating_input().degrade();
@@ -234,21 +240,24 @@ mod app {
         update_system_time::spawn().unwrap();
         poll_battery_voltage::spawn().unwrap();
         draw_screen::spawn().unwrap();
+        ramp_on_backlight::spawn().unwrap();
+        on_display_timeout::spawn_after(DISPLAY_TIMEOUT).unwrap();
 
         (
             Shared {
                 font_styles: FontStyles::default(),
                 icons: Icons::default(),
+                display_active: AtomicBool::new(false),
                 _delay: delay,
                 button,
                 system_time,
+                backlight,
                 display,
                 battery_controller,
                 motor_controller,
             },
             Local {
                 gpiote,
-                backlight,
                 touch_controller,
                 watchdog,
                 watch_face,
@@ -318,20 +327,51 @@ mod app {
         }
     }
 
-    #[task(local = [backlight])]
-    fn button_pressed(ctx: button_pressed::Context) {
-        if ctx.local.backlight.brightness() == Brightness::L7 {
-            ctx.local.backlight.set_brightness(Brightness::Off);
-        } else {
-            ctx.local.backlight.brighter();
-        }
-        rprintln!("button pressed b={}", ctx.local.backlight.brightness());
+    #[task(shared = [&display_active], priority = 4)]
+    fn button_pressed(_ctx: button_pressed::Context) {
+        //let display_active = ctx.shared.display_active;
+        //display_active.store(true, SeqCst);
+        on_display_timeout::spawn_after(DISPLAY_TIMEOUT).ok();
+        ramp_on_backlight::spawn().ok();
     }
 
-    #[task(local = [touch_controller])]
+    #[task(local = [touch_controller], shared = [&display_active],)]
     fn touch_event(ctx: touch_event::Context) {
-        if let Some(touch_data) = ctx.local.touch_controller.read_touch_data() {
+        let touch_controller = ctx.local.touch_controller;
+        let display_active = ctx.shared.display_active;
+        if let Some(touch_data) = touch_controller.read_touch_data() {
+            display_active.store(true, SeqCst);
             rprintln!("{}", touch_data);
+        }
+    }
+
+    #[task(shared = [backlight], priority = 3)]
+    fn ramp_on_backlight(ctx: ramp_on_backlight::Context) {
+        let backlight = ctx.shared.backlight;
+        if backlight.brightness() != Brightness::L7 {
+            backlight.brighter();
+            ramp_on_backlight::spawn_after(Backlight::RAMP_INC_MS).unwrap();
+        }
+    }
+
+    #[task(shared = [backlight], priority = 3)]
+    fn ramp_off_backlight(ctx: ramp_off_backlight::Context) {
+        let backlight = ctx.shared.backlight;
+        if backlight.brightness() != Brightness::Off {
+            backlight.darker();
+            ramp_off_backlight::spawn_after(Backlight::RAMP_INC_MS).unwrap();
+        }
+    }
+
+    #[task(shared = [&display_active], priority = 4)]
+    fn on_display_timeout(ctx: on_display_timeout::Context) {
+        let display_active = ctx.shared.display_active;
+        let display_was_active = display_active.swap(false, SeqCst);
+        if !display_was_active {
+            rprintln!("Display timeout");
+            ramp_off_backlight::spawn().ok();
+        } else {
+            on_display_timeout::spawn_after(DISPLAY_TIMEOUT).unwrap();
         }
     }
 

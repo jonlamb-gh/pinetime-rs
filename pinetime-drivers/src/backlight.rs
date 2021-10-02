@@ -3,6 +3,7 @@ use crate::hal::{
     prelude::OutputPin,
 };
 use core::fmt;
+use rtic::time::duration::Milliseconds;
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub enum Brightness {
@@ -69,7 +70,7 @@ impl Brightness {
             L4 => L3,
             L5 => L4,
             L6 => L5,
-            L7 => Off,
+            L7 => L6,
         }
     }
 }
@@ -103,6 +104,8 @@ pub struct Backlight {
 }
 
 impl Backlight {
+    pub const RAMP_INC_MS: Milliseconds<u32> = Milliseconds(50);
+
     pub fn new(low: LowPin, mid: MidPin, high: HighPin) -> Self {
         let mut backlight = Backlight {
             low,
