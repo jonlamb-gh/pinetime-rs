@@ -12,5 +12,5 @@ pub mod button;
 pub mod cst816s;
 pub mod lcd;
 pub mod motor_controller;
-pub mod spi_nor_flash;
+pub mod st7789_ext;
 pub mod watchdog;

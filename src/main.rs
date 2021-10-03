@@ -43,20 +43,21 @@ mod app {
         timer::Timer,
         twim::{self, Frequency, Twim},
     };
+    use pinetime_common::{
+        display, embedded_graphics::prelude::*, AnimatedDisplay, RefreshDirection,
+    };
     use pinetime_drivers::{
         backlight::{Backlight, Brightness},
         battery_controller::BatteryController,
         button::Button,
-        cst816s::{self, Cst816s},
+        cst816s::{self, Cst816s, Gesture},
         display_interface_spi::SPIInterface,
         lcd::{LcdCsPin, LcdDcPin, LcdResetPin},
         motor_controller::MotorController,
-        st7789::{Orientation, ST7789},
+        st7789_ext::AnimatedSt7789,
         watchdog::Watchdog,
     };
     use pinetime_graphics::{
-        display,
-        embedded_graphics::prelude::*,
         font_styles::FontStyles,
         icons::Icons,
         screens::{WatchFace, WatchFaceResources},
@@ -67,7 +68,7 @@ mod app {
     use system_time::SystemTime;
 
     const SCREEN_REFRESH_INTERVAL: Milliseconds = Milliseconds(20_u32);
-    const DISPLAY_TIMEOUT: Seconds = Seconds(10_u32);
+    const DISPLAY_TIMEOUT: Seconds = Seconds(5_u32);
 
     #[monotonic(binds = RTC1, default = true)]
     type RtcMono = Rtc1Monotonic;
@@ -76,7 +77,7 @@ mod app {
     struct Shared {
         font_styles: FontStyles,
         icons: Icons,
-        display_active: AtomicBool,
+        display_active: AtomicBool, // TODO newtype/wrapper with better semantics
 
         _delay: Timer<pac::TIMER0>,
 
@@ -94,7 +95,7 @@ mod app {
         // DisplayEvent::ChargeInd(bool) or whatev
         // ...
         #[lock_free]
-        display: ST7789<SPIInterface<Spim<pac::SPIM0>, LcdDcPin, LcdCsPin>, LcdResetPin>,
+        display: AnimatedSt7789<SPIInterface<Spim<pac::SPIM0>, LcdDcPin, LcdCsPin>, LcdResetPin>,
 
         #[lock_free]
         battery_controller: BatteryController,
@@ -228,9 +229,8 @@ mod app {
         let lcd_rst: LcdResetPin = gpio.p0_26.into_push_pull_output(Level::Low);
 
         let di = SPIInterface::new(display_spi, lcd_dc, lcd_cs);
-        let mut display = ST7789::new(di, lcd_rst, display::WIDTH, display::HEIGHT);
+        let mut display = AnimatedSt7789::new(di, lcd_rst, display::WIDTH, display::HEIGHT);
         display.init(&mut delay).unwrap();
-        display.set_orientation(Orientation::Portrait).unwrap();
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
@@ -247,7 +247,7 @@ mod app {
             Shared {
                 font_styles: FontStyles::default(),
                 icons: Icons::default(),
-                display_active: AtomicBool::new(false),
+                display_active: AtomicBool::new(true),
                 _delay: delay,
                 button,
                 system_time,
@@ -328,20 +328,37 @@ mod app {
     }
 
     #[task(shared = [&display_active], priority = 4)]
-    fn button_pressed(_ctx: button_pressed::Context) {
-        //let display_active = ctx.shared.display_active;
-        //display_active.store(true, SeqCst);
-        on_display_timeout::spawn_after(DISPLAY_TIMEOUT).ok();
-        ramp_on_backlight::spawn().ok();
+    fn button_pressed(ctx: button_pressed::Context) {
+        let display_active = ctx.shared.display_active;
+        let display_was_active = display_active.load(SeqCst);
+        if !display_was_active {
+            display_active.store(true, SeqCst);
+            on_display_timeout::spawn_after(DISPLAY_TIMEOUT).ok();
+            ramp_on_backlight::spawn().ok();
+        }
     }
 
-    #[task(local = [touch_controller], shared = [&display_active],)]
+    #[task(local = [touch_controller], shared = [&display_active, display], priority = 5)]
     fn touch_event(ctx: touch_event::Context) {
         let touch_controller = ctx.local.touch_controller;
         let display_active = ctx.shared.display_active;
-        if let Some(touch_data) = touch_controller.read_touch_data() {
-            display_active.store(true, SeqCst);
-            rprintln!("{}", touch_data);
+        let display = ctx.shared.display;
+
+        let display_was_active = display_active.load(SeqCst);
+
+        // TODO - need to redo the idea of "display_active"
+        if display_was_active {
+            if let Some(touch_data) = touch_controller.read_touch_data() {
+                display_active.store(true, SeqCst);
+                rprintln!("{}", touch_data);
+                match touch_data.gesture {
+                    Some(Gesture::SlideUp) => display.set_refresh_direction(RefreshDirection::Up),
+                    Some(Gesture::SlideDown) => {
+                        display.set_refresh_direction(RefreshDirection::Down)
+                    }
+                    _ => (),
+                }
+            }
         }
     }
 
@@ -363,6 +380,7 @@ mod app {
         }
     }
 
+    // TODO - need to redo the idea of "display_active"
     #[task(shared = [&display_active], priority = 4)]
     fn on_display_timeout(ctx: on_display_timeout::Context) {
         let display_active = ctx.shared.display_active;
@@ -415,17 +433,27 @@ mod app {
         ctx.shared.motor_controller.off();
     }
 
-    #[task(local = [watch_face], shared = [&font_styles, &icons, display, system_time, battery_controller], priority = 5)]
+    #[task(
+        local = [watch_face],
+        shared = [&font_styles, &icons, &display_active, display, system_time, battery_controller],
+        priority = 5)
+    ]
     fn draw_screen(ctx: draw_screen::Context) {
-        let display = ctx.shared.display;
-        let screen = ctx.local.watch_face;
-        let res = WatchFaceResources {
-            font_styles: ctx.shared.font_styles,
-            icons: ctx.shared.icons,
-            sys_time: ctx.shared.system_time,
-            bat_ctl: ctx.shared.battery_controller,
-        };
-        screen.refresh(display, &res).unwrap();
+        let display_active = ctx.shared.display_active;
+        if display_active.load(SeqCst) {
+            let display = ctx.shared.display;
+            let screen = ctx.local.watch_face;
+
+            display.update_animations().unwrap();
+
+            let res = WatchFaceResources {
+                font_styles: ctx.shared.font_styles,
+                icons: ctx.shared.icons,
+                sys_time: ctx.shared.system_time,
+                bat_ctl: ctx.shared.battery_controller,
+            };
+            screen.refresh(display, &res).unwrap();
+        }
 
         draw_screen::spawn_after(SCREEN_REFRESH_INTERVAL).unwrap();
     }

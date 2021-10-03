@@ -356,7 +356,7 @@ checksum = "f0f6f3e36f203cfedbc78b357fb28730aa2c6dc1ab060ee5c2405e843988d3c7"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
 ]
 
 [[package]]
@@ -384,7 +384,7 @@ dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
  "rtic-syntax",
- "syn 1.0.77",
+ "syn 1.0.78",
 ]
 
 [[package]]
@@ -588,7 +588,7 @@ dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
  "rustversion",
- "syn 1.0.77",
+ "syn 1.0.78",
  "synstructure",
 ]
 
@@ -641,7 +641,7 @@ checksum = "aa4da3c766cd7a0db8242e326e9e4e081edd567072893ed320008189715366a4"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
  "synstructure",
 ]
 
@@ -1166,6 +1166,7 @@ name = "pinetime-common"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "embedded-graphics",
  "err-derive",
 ]
 
@@ -1187,7 +1188,6 @@ dependencies = [
 name = "pinetime-graphics"
 version = "0.1.0"
 dependencies = [
- "embedded-graphics",
  "heapless",
  "pinetime-common",
 ]
@@ -1244,7 +1244,7 @@ dependencies = [
  "proc-macro-error-attr",
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
  "version_check",
 ]
 
@@ -1520,7 +1520,7 @@ dependencies = [
  "indexmap",
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
 ]
 
 [[package]]
@@ -1640,7 +1640,7 @@ checksum = "d7bc1a1ab1961464eae040d96713baa5a724a8152c1222492465b54322ec508b"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
 ]
 
 [[package]]
@@ -1729,7 +1729,7 @@ dependencies = [
  "proc-macro-error",
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
 ]
 
 [[package]]
@@ -1745,9 +1745,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.77"
+version = "1.0.78"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5239bc68e0fef57495900cfea4e8dc75596d9a319d7e16b1e0a440d24e6fe0a0"
+checksum = "a4eac2e6c19f5c3abc0c229bea31ff0b9b091c7b14990e8924b92902a303a0c0"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
@@ -1762,7 +1762,7 @@ checksum = "474aaa926faa1603c40b7885a9eaea29b444d1cb2850cb7c0e37bb1a4182f4fa"
 dependencies = [
  "proc-macro2 1.0.29",
  "quote 1.0.9",
- "syn 1.0.77",
+ "syn 1.0.78",
  "unicode-xid 0.2.2",
 ]
 

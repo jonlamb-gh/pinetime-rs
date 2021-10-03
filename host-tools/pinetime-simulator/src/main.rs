@@ -2,10 +2,12 @@ use chrono::{DateTime, Local, NaiveDateTime};
 use embedded_graphics_simulator::{
     sdl2::Keycode, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
-use pinetime_common::{BatteryControllerExt, MilliVolts, SystemTimeExt};
-use pinetime_graphics::embedded_graphics::prelude::*;
-use pinetime_graphics::{
+use pinetime_common::{
     display::{self, PixelFormat, BACKGROUND_COLOR},
+    embedded_graphics::prelude::*,
+    BatteryControllerExt, MilliVolts, SystemTimeExt,
+};
+use pinetime_graphics::{
     font_styles::FontStyles,
     icons::Icons,
     screens::{WatchFace, WatchFaceResources},

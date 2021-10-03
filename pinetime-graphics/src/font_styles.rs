@@ -1,5 +1,5 @@
-use crate::display;
-use embedded_graphics::{
+use pinetime_common::display;
+use pinetime_common::embedded_graphics::{
     geometry::Size,
     image::ImageRaw,
     mono_font::{

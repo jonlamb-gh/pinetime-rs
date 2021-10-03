@@ -1,4 +1,4 @@
-use embedded_graphics::{
+use pinetime_common::embedded_graphics::{
     geometry::Size,
     image::ImageRaw,
     mono_font::{mapping::StrGlyphMapping, DecorationDimensions, MonoFont},

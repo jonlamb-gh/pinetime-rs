@@ -1,10 +1,14 @@
+// TODO - instead of ref to display, consider making these
+// impl Drawable
+// https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/trait.Drawable.html
+
 use crate::{
-    display::{self, PixelFormat, BACKGROUND_COLOR},
     font_styles::FontStyles,
     icons::{Icon, Icons},
 };
 use core::fmt::{self, Write};
-use embedded_graphics::{
+use heapless::String;
+use pinetime_common::embedded_graphics::{
     draw_target::DrawTarget,
     geometry::Point,
     mono_font::MonoTextStyleBuilder,
@@ -12,9 +16,9 @@ use embedded_graphics::{
     text::{Alignment, Baseline, Text, TextStyleBuilder},
     Drawable,
 };
-use heapless::String;
 use pinetime_common::{
     chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike},
+    display::{self, PixelFormat, BACKGROUND_COLOR},
     err_derive, BatteryControllerExt, SystemTimeExt,
 };
 
