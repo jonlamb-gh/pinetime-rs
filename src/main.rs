@@ -32,7 +32,6 @@ mod system_time;
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4])]
 mod app {
     use crate::{hal, rtc_monotonic, system_time};
-    use core::sync::atomic::{AtomicBool, Ordering::SeqCst};
     use hal::{
         clocks::Clocks,
         gpio::{self, Level},
@@ -44,7 +43,8 @@ mod app {
         twim::{self, Frequency, Twim},
     };
     use pinetime_common::{
-        display, embedded_graphics::prelude::*, AnimatedDisplay, RefreshDirection,
+        display, embedded_graphics::prelude::*, AnimatedDisplay, AtomicDisplayAwakeState,
+        RefreshDirection,
     };
     use pinetime_drivers::{
         backlight::{Backlight, Brightness},
@@ -69,6 +69,9 @@ mod app {
 
     const SCREEN_REFRESH_INTERVAL: Milliseconds = Milliseconds(20_u32);
     const DISPLAY_TIMEOUT: Seconds = Seconds(5_u32);
+    const DISPLAY_TIMEOUT_POLL_INTERVAL: Seconds = Seconds(1_u32);
+    const DISPLAY_TIMEOUT_TIMER_TICKS: u32 =
+        Timer::<pac::TIMER0>::TICKS_PER_SECOND * DISPLAY_TIMEOUT.0;
 
     #[monotonic(binds = RTC1, default = true)]
     type RtcMono = Rtc1Monotonic;
@@ -77,9 +80,10 @@ mod app {
     struct Shared {
         font_styles: FontStyles,
         icons: Icons,
-        display_active: AtomicBool, // TODO newtype/wrapper with better semantics
+        display_state: AtomicDisplayAwakeState,
 
-        _delay: Timer<pac::TIMER0>,
+        #[lock_free]
+        display_sleep_timer: Timer<pac::TIMER0>,
 
         #[lock_free]
         button: Button,
@@ -241,14 +245,14 @@ mod app {
         poll_battery_voltage::spawn().unwrap();
         draw_screen::spawn().unwrap();
         ramp_on_backlight::spawn().unwrap();
-        on_display_timeout::spawn_after(DISPLAY_TIMEOUT).unwrap();
+        wakeup_display::spawn().unwrap();
 
         (
             Shared {
                 font_styles: FontStyles::default(),
                 icons: Icons::default(),
-                display_active: AtomicBool::new(true),
-                _delay: delay,
+                display_state: AtomicDisplayAwakeState::new(false),
+                display_sleep_timer: delay,
                 button,
                 system_time,
                 backlight,
@@ -327,29 +331,23 @@ mod app {
         }
     }
 
-    #[task(shared = [&display_active], priority = 4)]
+    #[task(shared = [&display_state], priority = 4)]
     fn button_pressed(ctx: button_pressed::Context) {
-        let display_active = ctx.shared.display_active;
-        let display_was_active = display_active.load(SeqCst);
-        if !display_was_active {
-            display_active.store(true, SeqCst);
-            on_display_timeout::spawn_after(DISPLAY_TIMEOUT).ok();
-            ramp_on_backlight::spawn().ok();
+        // TODO - if already awake, then turn off disable
+        let display_state = ctx.shared.display_state;
+        if !display_state.is_awake() {
+            wakeup_display::spawn().ok();
         }
     }
 
-    #[task(local = [touch_controller], shared = [&display_active, display], priority = 5)]
+    #[task(local = [touch_controller], shared = [&display_state, display], priority = 5)]
     fn touch_event(ctx: touch_event::Context) {
         let touch_controller = ctx.local.touch_controller;
-        let display_active = ctx.shared.display_active;
+        let display_state = ctx.shared.display_state;
         let display = ctx.shared.display;
 
-        let display_was_active = display_active.load(SeqCst);
-
-        // TODO - need to redo the idea of "display_active"
-        if display_was_active {
+        if display_state.is_awake() {
             if let Some(touch_data) = touch_controller.read_touch_data() {
-                display_active.store(true, SeqCst);
                 rprintln!("{}", touch_data);
                 match touch_data.gesture {
                     Some(Gesture::SlideUp) => display.set_refresh_direction(RefreshDirection::Up),
@@ -359,10 +357,11 @@ mod app {
                     _ => (),
                 }
             }
+            wakeup_display::spawn().ok();
         }
     }
 
-    #[task(shared = [backlight], priority = 3)]
+    #[task(shared = [backlight], priority = 6)]
     fn ramp_on_backlight(ctx: ramp_on_backlight::Context) {
         let backlight = ctx.shared.backlight;
         if backlight.brightness() != Brightness::L7 {
@@ -371,7 +370,7 @@ mod app {
         }
     }
 
-    #[task(shared = [backlight], priority = 3)]
+    #[task(shared = [backlight], priority = 6)]
     fn ramp_off_backlight(ctx: ramp_off_backlight::Context) {
         let backlight = ctx.shared.backlight;
         if backlight.brightness() != Brightness::Off {
@@ -380,16 +379,33 @@ mod app {
         }
     }
 
-    // TODO - need to redo the idea of "display_active"
-    #[task(shared = [&display_active], priority = 4)]
-    fn on_display_timeout(ctx: on_display_timeout::Context) {
-        let display_active = ctx.shared.display_active;
-        let display_was_active = display_active.swap(false, SeqCst);
-        if !display_was_active {
-            rprintln!("Display timeout");
-            ramp_off_backlight::spawn().ok();
+    #[task(shared = [&display_state, display_sleep_timer], priority = 6)]
+    fn wakeup_display(ctx: wakeup_display::Context) {
+        let display_state = ctx.shared.display_state;
+        let display_sleep_timer = ctx.shared.display_sleep_timer;
+
+        display_sleep_timer.start(DISPLAY_TIMEOUT_TIMER_TICKS);
+        if !display_state.is_awake() {
+            display_state.awaken();
+            poll_display_timeout::spawn_after(DISPLAY_TIMEOUT_POLL_INTERVAL).ok();
+            ramp_on_backlight::spawn().ok();
+        }
+    }
+
+    #[task(shared = [&display_state, display_sleep_timer], priority = 6)]
+    fn poll_display_timeout(ctx: poll_display_timeout::Context) {
+        let display_state = ctx.shared.display_state;
+        let display_sleep_timer = ctx.shared.display_sleep_timer;
+
+        let timeout_expired = display_sleep_timer.wait().is_ok();
+        if timeout_expired {
+            let display_was_active = display_state.get_and_clear();
+            if display_was_active {
+                rprintln!("Display timeout");
+                ramp_off_backlight::spawn().ok();
+            }
         } else {
-            on_display_timeout::spawn_after(DISPLAY_TIMEOUT).unwrap();
+            poll_display_timeout::spawn_after(DISPLAY_TIMEOUT_POLL_INTERVAL).unwrap();
         }
     }
 
@@ -403,6 +419,8 @@ mod app {
                 ctx.shared.battery_controller.voltage(),
                 ctx.shared.battery_controller.percent_remaining()
             );
+
+            wakeup_display::spawn().ok();
 
             start_ring::spawn_after(
                 BatteryController::POWER_PRESENCE_DEBOUNCE_MS,
@@ -435,16 +453,17 @@ mod app {
 
     #[task(
         local = [watch_face],
-        shared = [&font_styles, &icons, &display_active, display, system_time, battery_controller],
+        shared = [&font_styles, &icons, &display_state, display, system_time, battery_controller],
         priority = 5)
     ]
     fn draw_screen(ctx: draw_screen::Context) {
-        let display_active = ctx.shared.display_active;
-        if display_active.load(SeqCst) {
-            let display = ctx.shared.display;
-            let screen = ctx.local.watch_face;
+        let display = ctx.shared.display;
+        let display_state = ctx.shared.display_state;
 
-            display.update_animations().unwrap();
+        display.update_animations().unwrap();
+
+        if display_state.is_awake() {
+            let screen = ctx.local.watch_face;
 
             let res = WatchFaceResources {
                 font_styles: ctx.shared.font_styles,

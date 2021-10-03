@@ -1,3 +1,6 @@
+// TODO use https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/draw_target/trait.DrawTargetExt.html
+// to clip while scrolling
+
 use crate::hal::prelude::{OutputPin, _embedded_hal_blocking_delay_DelayUs as DelayUs};
 use display_interface::WriteOnlyDataCommand;
 use pinetime_common::embedded_graphics::{
@@ -6,7 +9,7 @@ use pinetime_common::embedded_graphics::{
 use pinetime_common::{display, AnimatedDisplay, RefreshDirection};
 use st7789::{Error, Orientation, ST7789};
 
-pub const SCROLL_DELTA: u16 = 8;
+pub const SCROLL_DELTA: u16 = 16;
 
 pub struct AnimatedSt7789<DI, RST>
 where

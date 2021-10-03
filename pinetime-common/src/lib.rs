@@ -2,6 +2,7 @@
 
 pub use crate::animated_display::{AnimatedDisplay, RefreshDirection};
 pub use crate::battery_controller::{BatteryControllerExt, MilliVolts};
+pub use crate::display::AtomicDisplayAwakeState;
 pub use crate::system_time::SystemTimeExt;
 pub use chrono;
 pub use embedded_graphics;
