@@ -2,6 +2,7 @@
 name = "pinetime-rs"
 version = "0.1.0"
 edition = "2018"
+build = "build.rs"
 exclude = [
     "host-tools",
     "doc",
@@ -50,6 +51,9 @@ path = "pinetime-drivers"
 
 [dependencies.pinetime-graphics]
 path = "pinetime-graphics"
+
+[build-dependencies]
+built = "0.5"
 
 [profile.dev]
 codegen-units = 1

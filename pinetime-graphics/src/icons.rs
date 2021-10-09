@@ -60,12 +60,20 @@ pub struct Icons {
     pub p20: &'static MonoFont<'static>,
 }
 
+// dyn GlyphMapping + 'static)` cannot be shared between threads safely
+unsafe impl Sync for Icons {}
 unsafe impl Send for Icons {}
 
-impl Default for Icons {
-    fn default() -> Self {
+impl Icons {
+    pub const fn new() -> Self {
         Icons {
             p20: &FONT_AWESOME_ICONS_20_POINT,
         }
+    }
+}
+
+impl Default for Icons {
+    fn default() -> Self {
+        Icons::new()
     }
 }

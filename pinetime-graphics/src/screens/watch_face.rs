@@ -6,6 +6,10 @@
 //
 // or moving WatchFaceResources into WatchFace with static lifetime, setup in init task
 // Fonts can't be made consts and are non_exhaustive
+//
+// WatchFaceState
+// WatchFaceResources
+// WatchFace(state, res), impls Drawable
 
 use crate::{
     font_styles::FontStyles,
@@ -42,8 +46,8 @@ pub enum Error {
 
 // TODO - split up, some needed for drawing, others for updating state
 pub struct WatchFaceResources<'a, T: SystemTimeExt, B: BatteryControllerExt> {
-    pub font_styles: &'a FontStyles,
-    pub icons: &'a Icons,
+    pub font_styles: &'static FontStyles,
+    pub icons: &'static Icons,
     pub sys_time: &'a T,
     pub bat_ctl: &'a B,
 }
@@ -128,7 +132,7 @@ impl WatchFace {
                 time.minute()
             )?;
 
-            let mut font_style = res.font_styles.watchface_time_style;
+            let mut font_style = res.font_styles.watchface_time.style();
             font_style.background_color = BACKGROUND_COLOR.into();
             let text_style = TextStyleBuilder::new()
                 .baseline(Baseline::Alphabetic)
@@ -169,7 +173,7 @@ impl WatchFace {
                 date.year()
             )?;
 
-            let mut font_style = res.font_styles.watchface_date_style;
+            let mut font_style = res.font_styles.watchface_date.style();
             font_style.background_color = BACKGROUND_COLOR.into();
             let text_style = TextStyleBuilder::new()
                 .baseline(Baseline::Alphabetic)

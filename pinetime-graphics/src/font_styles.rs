@@ -38,28 +38,55 @@ pub const JETBRAINS_FONT_16_POINT_BOLD: MonoFont = MonoFont {
 
 #[derive(Debug)]
 pub struct FontStyles {
-    pub watchface_time_style: MonoTextStyle<'static, display::PixelFormat>,
-    pub watchface_date_style: MonoTextStyle<'static, display::PixelFormat>,
+    pub watchface_time: Font,
+    pub watchface_date: Font,
 }
 
+// dyn GlyphMapping + 'static)` cannot be shared between threads safely
+unsafe impl Sync for FontStyles {}
 unsafe impl Send for FontStyles {}
 
-impl Default for FontStyles {
-    fn default() -> Self {
+impl FontStyles {
+    pub const fn new() -> Self {
         FontStyles {
-            watchface_time_style: MonoTextStyleBuilder::new()
-                .font(&JETBRAINS_FONT_54_POINT_EXTRA_BOLD)
-                .text_color(display::PixelFormat::WHITE)
-                .build(),
-            watchface_date_style: MonoTextStyleBuilder::new()
-                .font(&JETBRAINS_FONT_16_POINT_BOLD)
-                //.text_color(display::PixelFormat::WHITE)
-                .text_color(display::PixelFormat::new(
+            watchface_time: Font {
+                font: &JETBRAINS_FONT_54_POINT_EXTRA_BOLD,
+                text_color: display::PixelFormat::WHITE,
+            },
+            watchface_date: Font {
+                font: &JETBRAINS_FONT_16_POINT_BOLD,
+                //text_color: display::PixelFormat::WHITE,
+                text_color: display::PixelFormat::new(
                     display::PixelFormat::MAX_R / 2,
                     display::PixelFormat::MAX_G / 2,
                     display::PixelFormat::MAX_B / 2,
-                ))
-                .build(),
+                ),
+            },
         }
+    }
+}
+
+impl Default for FontStyles {
+    fn default() -> Self {
+        FontStyles::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct Font {
+    pub font: &'static MonoFont<'static>,
+    pub text_color: display::PixelFormat,
+}
+
+// dyn GlyphMapping + 'static)` cannot be shared between threads safely
+unsafe impl Sync for Font {}
+unsafe impl Send for Font {}
+
+impl Font {
+    pub fn style(&self) -> MonoTextStyle<'static, display::PixelFormat> {
+        MonoTextStyleBuilder::new()
+            .font(self.font)
+            .text_color(self.text_color)
+            .build()
     }
 }

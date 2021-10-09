@@ -16,14 +16,15 @@ use std::{thread, time::Duration};
 
 const SIMULATOR_SCALE: u32 = 2;
 
+const FONT_STYLES: FontStyles = FontStyles::new();
+const ICONS: Icons = Icons::new();
+
 fn main() -> Result<(), core::convert::Infallible> {
     let mut display =
         SimulatorDisplay::<PixelFormat>::with_default_color(display::SIZE, BACKGROUND_COLOR);
     let output_settings = OutputSettingsBuilder::new().scale(SIMULATOR_SCALE).build();
     let mut window = Window::new("PineTime Simulator", &output_settings);
 
-    let font_styles = FontStyles::default();
-    let icons = Icons::default();
     let mut sim_clock = SimClock::default();
     let mut sim_battery = SimBattery::default();
 
@@ -37,8 +38,8 @@ fn main() -> Result<(), core::convert::Infallible> {
         sim_clock.update();
 
         let res = WatchFaceResources {
-            font_styles: &font_styles,
-            icons: &icons,
+            font_styles: &FONT_STYLES,
+            icons: &ICONS,
             sys_time: &sim_clock,
             bat_ctl: &sim_battery,
         };

@@ -19,9 +19,6 @@
 // https://github.com/tock/tock/tree/master/libraries/tickv
 // see the mem map in
 // https://github.com/JF002/pinetime-mcuboot-bootloader
-//
-// embed firmware/crate version somewhere
-// https://crates.io/crates/built
 
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
@@ -29,9 +26,13 @@ use panic_rtt_target as _;
 mod rtc_monotonic;
 mod system_time;
 
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 #[rtic::app(device = crate::hal::pac, peripherals = true, dispatchers = [SWI0_EGU0, SWI1_EGU1, SWI2_EGU2, SWI3_EGU3, SWI4_EGU4])]
 mod app {
-    use crate::{hal, rtc_monotonic, system_time};
+    use crate::{built_info, hal, rtc_monotonic, system_time};
     use hal::{
         clocks::Clocks,
         gpio::{self, Level},
@@ -78,8 +79,8 @@ mod app {
 
     #[shared]
     struct Shared {
-        font_styles: FontStyles,
-        icons: Icons,
+        font_styles: &'static FontStyles,
+        icons: &'static Icons,
         display_state: AtomicDisplayAwakeState,
 
         #[lock_free]
@@ -117,10 +118,11 @@ mod app {
         watch_face: WatchFace,
     }
 
-    #[init]
+    #[init(local = [font_styles: FontStyles = FontStyles::new(), icons: Icons = Icons::new()])]
     fn init(ctx: init::Context) -> (Shared, Local, init::Monotonics) {
         rtt_init_print!();
         rprintln!("Initializing");
+        rprintln!("Version {}", built_info::PKG_VERSION);
 
         let hal::pac::Peripherals {
             CLOCK,
@@ -249,8 +251,8 @@ mod app {
 
         (
             Shared {
-                font_styles: FontStyles::default(),
-                icons: Icons::default(),
+                font_styles: ctx.local.font_styles,
+                icons: ctx.local.icons,
                 display_state: AtomicDisplayAwakeState::new(false),
                 display_sleep_timer: delay,
                 button,
