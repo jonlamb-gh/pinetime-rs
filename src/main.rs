@@ -1,25 +1,6 @@
 #![no_main]
 #![no_std]
 
-// helpful links
-//
-// https://github.com/JF002/InfiniTime
-// https://github.com/JF002/InfiniTime/blob/develop/src/components/datetime/DateTimeController.cpp
-// https://lupyuen.github.io/pinetime-rust-mynewt/articles/timesync
-// https://github.com/JF002/InfiniTime/blob/136d4bb85e36777f0f9877fd065476ba1c02ca90/src/FreeRTOS/port_cmsis_systick.c
-//
-// probably do something similar:
-// https://github.com/JF002/InfiniTime/pull/595
-//
-// TODO
-// some sort of error handling pattern / resource and priority management
-//
-// flash fs
-// https://github.com/jonas-schievink/spi-memory (not maintained?)
-// https://github.com/tock/tock/tree/master/libraries/tickv
-// see the mem map in
-// https://github.com/JF002/pinetime-mcuboot-bootloader
-
 use nrf52832_hal as hal;
 use panic_rtt_target as _;
 
@@ -110,7 +91,6 @@ mod app {
     #[local]
     struct Local<'a> {
         gpiote: Gpiote,
-        //backligh_timer: Timer<pac::TIMER0>,
         touch_controller: Cst816s<pac::TWIM1>,
         watchdog: Watchdog,
         watch_face: WatchFace,
@@ -460,6 +440,7 @@ mod app {
         let display = ctx.shared.display;
         let display_state = ctx.shared.display_state;
 
+        // TODO - move this to after drawing so it can clear/draw over it
         display.update_animations().unwrap();
 
         if display_state.is_awake() {

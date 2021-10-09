@@ -1,7 +1,5 @@
 // TODO use https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/draw_target/trait.DrawTargetExt.html
 // to clip while scrolling
-//
-// rename mod to animated_st7789.rs
 
 use crate::hal::prelude::{OutputPin, _embedded_hal_blocking_delay_DelayUs as DelayUs};
 use display_interface::WriteOnlyDataCommand;
