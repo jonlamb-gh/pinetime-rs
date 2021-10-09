@@ -1242,6 +1242,7 @@ dependencies = [
 name = "pinetime-graphics"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "heapless",
  "pinetime-common",
 ]

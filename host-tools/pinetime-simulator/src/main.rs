@@ -28,23 +28,23 @@ fn main() -> Result<(), core::convert::Infallible> {
     let mut sim_clock = SimClock::default();
     let mut sim_battery = SimBattery::default();
 
-    let mut screen = WatchFace::default();
+    let mut screen = WatchFace::new(&FONT_STYLES, &ICONS);
 
     clear_screen(&mut display)?;
 
     'running: loop {
-        window.update(&display);
-
         sim_clock.update();
 
         let res = WatchFaceResources {
-            font_styles: &FONT_STYLES,
-            icons: &ICONS,
             sys_time: &sim_clock,
             bat_ctl: &sim_battery,
         };
 
-        screen.refresh(&mut display, &res).unwrap();
+        screen.update(&res).unwrap();
+        screen.draw(&mut display).unwrap();
+        screen.clear_redraw();
+
+        window.update(&display);
 
         for event in window.events() {
             match event {

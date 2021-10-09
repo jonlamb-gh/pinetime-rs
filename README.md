@@ -14,6 +14,8 @@ Run with `cargo run --release` or `cargo embed --release`.
 
 See [pinetime-simulator](host-tools/pinetime-simulator) crate.
 
+![pinetime_simulator.png](doc/pinetime_simulator.png)
+
 ## TODOs
 
 * Redo linker scripts so image goes into the existing bootloader's firmware slot and use the bootloader update procedure

@@ -79,8 +79,6 @@ mod app {
 
     #[shared]
     struct Shared {
-        font_styles: &'static FontStyles,
-        icons: &'static Icons,
         display_state: AtomicDisplayAwakeState,
 
         #[lock_free]
@@ -240,7 +238,7 @@ mod app {
 
         display.clear(display::PixelFormat::BLACK).unwrap();
 
-        let watch_face = WatchFace::new();
+        let watch_face = WatchFace::new(ctx.local.font_styles, ctx.local.icons);
 
         watchdog_petter::spawn().unwrap();
         update_system_time::spawn().unwrap();
@@ -251,8 +249,6 @@ mod app {
 
         (
             Shared {
-                font_styles: ctx.local.font_styles,
-                icons: ctx.local.icons,
                 display_state: AtomicDisplayAwakeState::new(false),
                 display_sleep_timer: delay,
                 button,
@@ -456,7 +452,7 @@ mod app {
 
     #[task(
         local = [watch_face],
-        shared = [&font_styles, &icons, &display_state, display, system_time, battery_controller],
+        shared = [&display_state, display, system_time, battery_controller],
         capacity = 2,
         priority = 5)
     ]
@@ -470,12 +466,12 @@ mod app {
             let screen = ctx.local.watch_face;
 
             let res = WatchFaceResources {
-                font_styles: ctx.shared.font_styles,
-                icons: ctx.shared.icons,
                 sys_time: ctx.shared.system_time,
                 bat_ctl: ctx.shared.battery_controller,
             };
-            screen.refresh(display, &res).unwrap();
+            screen.update(&res).unwrap();
+            screen.draw(display).unwrap();
+            screen.clear_redraw();
         }
 
         draw_screen::spawn_after(SCREEN_REFRESH_INTERVAL).unwrap();

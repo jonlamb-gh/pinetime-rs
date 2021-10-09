@@ -1,21 +1,9 @@
-// TODO - instead of ref to display, consider making these
-// impl Drawable
-// https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/trait.Drawable.html
-//
-// something like DrawableWatchFace {WatchFace, WatchFaceResources}
-//
-// or moving WatchFaceResources into WatchFace with static lifetime, setup in init task
-// Fonts can't be made consts and are non_exhaustive
-//
-// WatchFaceState
-// WatchFaceResources
-// WatchFace(state, res), impls Drawable
-
 use crate::{
     font_styles::FontStyles,
     icons::{Icon, Icons},
 };
-use core::fmt::{self, Write};
+use bitflags::bitflags;
+use core::fmt::Write;
 use heapless::String;
 use pinetime_common::embedded_graphics::{
     draw_target::DrawTarget,
@@ -26,7 +14,7 @@ use pinetime_common::embedded_graphics::{
     Drawable,
 };
 use pinetime_common::{
-    chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike},
+    chrono::{Datelike, NaiveDateTime, Timelike},
     display::{self, PixelFormat, BACKGROUND_COLOR},
     err_derive, BatteryControllerExt, SystemTimeExt,
 };
@@ -37,102 +25,149 @@ const MONTHS: [&str; 12] = [
 
 #[derive(Debug, err_derive::Error)]
 pub enum Error {
-    #[error(display = "DrawTarget error")]
-    DrawTarget,
-
     #[error(display = "Formatting error")]
     Formatting(#[error(source)] core::fmt::Error),
 }
 
-// TODO - split up, some needed for drawing, others for updating state
 pub struct WatchFaceResources<'a, T: SystemTimeExt, B: BatteryControllerExt> {
-    pub font_styles: &'static FontStyles,
-    pub icons: &'static Icons,
     pub sys_time: &'a T,
     pub bat_ctl: &'a B,
 }
 
 pub struct WatchFace {
-    redraw: bool,
+    redraw: Redraw,
     dt: NaiveDateTime,
     is_charging: bool,
     battery_icon: Icon,
-    text: String<32>,
+    time_text: String<6>,
+    date_text: String<18>,
+    font_styles: &'static FontStyles,
+    icons: &'static Icons,
 }
 
-impl Default for WatchFace {
-    fn default() -> Self {
-        Self::new()
+bitflags! {
+    struct Redraw: u8 {
+        const ALL = 0xFF;
+        const TIME = 1 << 0;
+        const DATE = 1 << 1;
+        const BATTERY = 1 << 2;
+        const CHARGE_PLUG = 1 << 3;
+        const FORCE_UPDATE = 1 << 7;
+    }
+}
+
+impl Redraw {
+    fn clear(&mut self) {
+        self.bits = 0;
+    }
+
+    fn set_all(&mut self) {
+        self.bits = Self::ALL.bits;
     }
 }
 
 impl WatchFace {
-    pub fn new() -> Self {
+    pub fn new(font_styles: &'static FontStyles, icons: &'static Icons) -> Self {
         WatchFace {
-            redraw: true,
+            redraw: Redraw::ALL,
             dt: NaiveDateTime::from_timestamp(0, 0),
             is_charging: false,
             battery_icon: Icon::BatteryFull,
-            text: String::new(),
+            time_text: String::new(),
+            date_text: String::new(),
+            font_styles,
+            icons,
         }
     }
 
-    pub fn set_redraw(&mut self) {
-        self.redraw = true;
+    pub fn force_redraw(&mut self) {
+        self.redraw.set_all();
     }
 
-    pub fn refresh<'a, D, T, B>(
-        &mut self,
-        display: &mut D,
-        res: &WatchFaceResources<'a, T, B>,
-    ) -> Result<(), Error>
+    pub fn clear_redraw(&mut self) {
+        self.redraw.clear();
+    }
+
+    pub fn update<'a, T, B>(&mut self, res: &WatchFaceResources<'a, T, B>) -> Result<(), Error>
     where
-        D: DrawTarget<Color = PixelFormat>,
-        <D as DrawTarget>::Error: fmt::Debug,
         T: SystemTimeExt,
         B: BatteryControllerExt,
     {
-        let force = self.redraw;
-        self.redraw = false;
-
         let dt = res.sys_time.date_time();
-        let date = dt.date();
-        let time = dt.time();
+        let percent_remaining = res.bat_ctl.percent_remaining();
+        let is_charging = res.bat_ctl.is_charging();
 
-        self.draw_time(res, force, &time, display)?;
-        self.draw_date(res, force, &date, display)?;
-        self.draw_battery_indicator(res, force, display)?;
-        self.draw_battery_charge_plug(res, force, display)?;
-
-        self.dt = *dt;
+        self.update_date_time(dt)?;
+        self.update_battery_indicator(percent_remaining);
+        self.update_battery_charge_plug(is_charging);
 
         Ok(())
     }
 
-    fn draw_time<'a, D, T, B>(
-        &mut self,
-        res: &WatchFaceResources<'a, T, B>,
-        force: bool,
-        time: &NaiveTime,
-        display: &mut D,
-    ) -> Result<(), Error>
-    where
-        D: DrawTarget<Color = PixelFormat>,
-        <D as DrawTarget>::Error: fmt::Debug,
-        T: SystemTimeExt,
-        B: BatteryControllerExt,
-    {
-        let last_time = self.dt.time();
-        if force || last_time.hour12() != time.hour12() || last_time.minute() != time.minute() {
-            self.text.clear();
+    fn update_date_time(&mut self, dt: &NaiveDateTime) -> Result<(), Error> {
+        let mut changed = false;
+
+        let prev_date = self.dt.date();
+        let date = dt.date();
+        if self.redraw.contains(Redraw::FORCE_UPDATE) || prev_date != date {
+            self.date_text.clear();
             write!(
-                &mut self.text,
+                &mut self.date_text,
+                "{} {:02} {} {}",
+                date.weekday(),
+                date.day(),
+                MONTHS[date.month0().clamp(0, 11) as usize],
+                date.year()
+            )?;
+            self.redraw |= Redraw::DATE;
+            changed = true;
+        }
+
+        let prev_time = self.dt.time();
+        let time = dt.time();
+        if self.redraw.contains(Redraw::FORCE_UPDATE)
+            || prev_time.hour12() != time.hour12()
+            || prev_time.minute() != time.minute()
+        {
+            self.time_text.clear();
+            write!(
+                &mut self.time_text,
                 "{:02}:{:02}",
                 time.hour12().1,
                 time.minute()
             )?;
+            self.redraw |= Redraw::TIME;
+            changed = true;
+        }
 
-            let mut font_style = res.font_styles.watchface_time.style();
+        if changed {
+            self.dt = *dt;
+        }
+
+        Ok(())
+    }
+
+    fn update_battery_indicator(&mut self, percent_remaining: u8) {
+        let icon = Icon::battery_icon_from_percent_remaining(percent_remaining);
+        if icon != self.battery_icon {
+            self.redraw |= Redraw::BATTERY;
+            self.battery_icon = icon;
+        }
+    }
+
+    fn update_battery_charge_plug(&mut self, is_charging: bool) {
+        if is_charging != self.is_charging {
+            self.redraw |= Redraw::CHARGE_PLUG;
+            self.is_charging = is_charging;
+        }
+    }
+
+    fn draw_time<D>(&self, display: &mut D) -> Result<(), <D as DrawTarget>::Error>
+    where
+        D: DrawTarget<Color = PixelFormat>,
+    {
+        if self.redraw.contains(Redraw::TIME) {
+            let mut font_style = self.font_styles.watchface_time.style();
             font_style.background_color = BACKGROUND_COLOR.into();
             let text_style = TextStyleBuilder::new()
                 .baseline(Baseline::Alphabetic)
@@ -140,40 +175,24 @@ impl WatchFace {
                 .build();
             let pos_x = (display::WIDTH / 2) as i32;
             let pos_y = (display::HEIGHT / 2) as i32;
-            Text::with_text_style(&self.text, Point::new(pos_x, pos_y), font_style, text_style)
-                .draw(display)
-                .map_err(|_| Error::DrawTarget)?;
+            Text::with_text_style(
+                &self.time_text,
+                Point::new(pos_x, pos_y),
+                font_style,
+                text_style,
+            )
+            .draw(display)?;
         }
 
         Ok(())
     }
 
-    fn draw_date<'a, D, T, B>(
-        &mut self,
-        res: &WatchFaceResources<'a, T, B>,
-        force: bool,
-        date: &NaiveDate,
-        display: &mut D,
-    ) -> Result<(), Error>
+    fn draw_date<D>(&self, display: &mut D) -> Result<(), <D as DrawTarget>::Error>
     where
         D: DrawTarget<Color = PixelFormat>,
-        <D as DrawTarget>::Error: fmt::Debug,
-        T: SystemTimeExt,
-        B: BatteryControllerExt,
     {
-        let last_date = self.dt.date();
-        if force || last_date != *date {
-            self.text.clear();
-            write!(
-                &mut self.text,
-                "{} {:02} {} {}",
-                date.weekday(),
-                date.day(),
-                MONTHS[date.month0().clamp(0, 11) as usize],
-                date.year()
-            )?;
-
-            let mut font_style = res.font_styles.watchface_date.style();
+        if self.redraw.contains(Redraw::DATE) {
+            let mut font_style = self.font_styles.watchface_date.style();
             font_style.background_color = BACKGROUND_COLOR.into();
             let text_style = TextStyleBuilder::new()
                 .baseline(Baseline::Alphabetic)
@@ -181,74 +200,59 @@ impl WatchFace {
                 .build();
             let pos_x = (display::WIDTH / 2) as i32;
             let pos_y = (display::HEIGHT / 2) as i32 + 50;
-            Text::with_text_style(&self.text, Point::new(pos_x, pos_y), font_style, text_style)
-                .draw(display)
-                .map_err(|_| Error::DrawTarget)?;
+            Text::with_text_style(
+                &self.date_text,
+                Point::new(pos_x, pos_y),
+                font_style,
+                text_style,
+            )
+            .draw(display)?;
         }
         Ok(())
     }
 
-    fn draw_battery_indicator<'a, D, T, B>(
-        &mut self,
-        res: &WatchFaceResources<'a, T, B>,
-        force: bool,
-        display: &mut D,
-    ) -> Result<(), Error>
+    fn draw_battery_indicator<D>(&self, display: &mut D) -> Result<(), <D as DrawTarget>::Error>
     where
         D: DrawTarget<Color = PixelFormat>,
-        <D as DrawTarget>::Error: fmt::Debug,
-        T: SystemTimeExt,
-        B: BatteryControllerExt,
     {
-        let icon = Icon::battery_icon_from_percent_remaining(res.bat_ctl.percent_remaining());
-        if force || icon != self.battery_icon {
-            self.battery_icon = icon;
-
-            let color = if icon == Icon::BatteryEmpty {
+        if self.redraw.contains(Redraw::BATTERY) {
+            let color = if self.battery_icon == Icon::BatteryEmpty {
                 display::PixelFormat::RED
             } else {
                 display::PixelFormat::WHITE
             };
 
             let icon_style = MonoTextStyleBuilder::new()
-                .font(res.icons.p20)
+                .font(self.icons.p20)
                 .text_color(color)
                 .background_color(BACKGROUND_COLOR)
                 .build();
             let pos_x = display::WIDTH - 30;
             let pos_y = 20;
-            Text::new(icon.as_text(), Point::new(pos_x as _, pos_y), icon_style)
-                .draw(display)
-                .map_err(|_| Error::DrawTarget)?;
+            Text::new(
+                self.battery_icon.as_text(),
+                Point::new(pos_x as _, pos_y),
+                icon_style,
+            )
+            .draw(display)?;
         }
 
         Ok(())
     }
 
-    fn draw_battery_charge_plug<'a, D, T, B>(
-        &mut self,
-        res: &WatchFaceResources<'a, T, B>,
-        force: bool,
-        display: &mut D,
-    ) -> Result<(), Error>
+    fn draw_battery_charge_plug<D>(&self, display: &mut D) -> Result<(), <D as DrawTarget>::Error>
     where
         D: DrawTarget<Color = PixelFormat>,
-        <D as DrawTarget>::Error: fmt::Debug,
-        T: SystemTimeExt,
-        B: BatteryControllerExt,
     {
-        let is_charging = res.bat_ctl.is_charging();
-        if force || is_charging != self.is_charging {
-            self.is_charging = is_charging;
-
-            let color = if is_charging {
+        if self.redraw.contains(Redraw::CHARGE_PLUG) {
+            let color = if self.is_charging {
                 display::PixelFormat::RED
             } else {
                 display::BACKGROUND_COLOR
             };
 
             let icon_style = MonoTextStyleBuilder::new()
-                .font(res.icons.p20)
+                .font(self.icons.p20)
                 .text_color(color)
                 .build();
             let pos_x = display::WIDTH - 55;
@@ -258,10 +262,25 @@ impl WatchFace {
                 Point::new(pos_x as _, pos_y),
                 icon_style,
             )
-            .draw(display)
-            .map_err(|_| Error::DrawTarget)?;
+            .draw(display)?;
         }
 
+        Ok(())
+    }
+}
+
+impl Drawable for WatchFace {
+    type Color = PixelFormat;
+    type Output = ();
+
+    fn draw<D>(&self, target: &mut D) -> Result<Self::Output, D::Error>
+    where
+        D: DrawTarget<Color = PixelFormat>,
+    {
+        self.draw_time(target)?;
+        self.draw_date(target)?;
+        self.draw_battery_indicator(target)?;
+        self.draw_battery_charge_plug(target)?;
         Ok(())
     }
 }
