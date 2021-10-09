@@ -47,6 +47,7 @@ mod app {
         RefreshDirection,
     };
     use pinetime_drivers::{
+        animated_st7789::AnimatedSt7789,
         backlight::{Backlight, Brightness},
         battery_controller::BatteryController,
         button::Button,
@@ -54,7 +55,6 @@ mod app {
         display_interface_spi::SPIInterface,
         lcd::{LcdCsPin, LcdDcPin, LcdResetPin},
         motor_controller::MotorController,
-        st7789_ext::AnimatedSt7789,
         watchdog::Watchdog,
     };
     use pinetime_graphics::{
@@ -387,6 +387,7 @@ mod app {
         display_sleep_timer.start(DISPLAY_TIMEOUT_TIMER_TICKS);
         if !display_state.is_awake() {
             display_state.awaken();
+            draw_screen::spawn().ok(); // backlight task is higher prio than display atm
             poll_display_timeout::spawn_after(DISPLAY_TIMEOUT_POLL_INTERVAL).ok();
             ramp_on_backlight::spawn().ok();
         }
@@ -454,6 +455,7 @@ mod app {
     #[task(
         local = [watch_face],
         shared = [&font_styles, &icons, &display_state, display, system_time, battery_controller],
+        capacity = 2,
         priority = 5)
     ]
     fn draw_screen(ctx: draw_screen::Context) {

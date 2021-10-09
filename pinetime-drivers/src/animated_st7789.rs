@@ -1,5 +1,7 @@
 // TODO use https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/draw_target/trait.DrawTargetExt.html
 // to clip while scrolling
+//
+// rename mod to animated_st7789.rs
 
 use crate::hal::prelude::{OutputPin, _embedded_hal_blocking_delay_DelayUs as DelayUs};
 use display_interface::WriteOnlyDataCommand;
@@ -102,6 +104,9 @@ where
         }
     }
 
+    // TODO - instead of Clipped+force-redraws, do fill_solid in here to fill background as
+    // scrolling progresses
+    // rect size is (width, SCROLL_DELTA), offset moves with scroll_offset
     fn update_animations(&mut self) -> Result<(), Error<PinE>> {
         let is_done = match self.in_progress_animation {
             Some(RefreshDirection::Up) => {

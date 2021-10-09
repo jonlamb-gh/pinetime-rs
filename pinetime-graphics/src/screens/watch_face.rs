@@ -1,6 +1,11 @@
 // TODO - instead of ref to display, consider making these
 // impl Drawable
 // https://docs.rs/embedded-graphics/0.7.1/embedded_graphics/trait.Drawable.html
+//
+// something like DrawableWatchFace {WatchFace, WatchFaceResources}
+//
+// or moving WatchFaceResources into WatchFace with static lifetime, setup in init task
+// Fonts can't be made consts and are non_exhaustive
 
 use crate::{
     font_styles::FontStyles,
@@ -35,6 +40,7 @@ pub enum Error {
     Formatting(#[error(source)] core::fmt::Error),
 }
 
+// TODO - split up, some needed for drawing, others for updating state
 pub struct WatchFaceResources<'a, T: SystemTimeExt, B: BatteryControllerExt> {
     pub font_styles: &'a FontStyles,
     pub icons: &'a Icons,
@@ -43,6 +49,7 @@ pub struct WatchFaceResources<'a, T: SystemTimeExt, B: BatteryControllerExt> {
 }
 
 pub struct WatchFace {
+    redraw: bool,
     dt: NaiveDateTime,
     is_charging: bool,
     battery_icon: Icon,
@@ -58,11 +65,16 @@ impl Default for WatchFace {
 impl WatchFace {
     pub fn new() -> Self {
         WatchFace {
+            redraw: true,
             dt: NaiveDateTime::from_timestamp(0, 0),
             is_charging: false,
             battery_icon: Icon::BatteryFull,
             text: String::new(),
         }
+    }
+
+    pub fn set_redraw(&mut self) {
+        self.redraw = true;
     }
 
     pub fn refresh<'a, D, T, B>(
@@ -76,8 +88,8 @@ impl WatchFace {
         T: SystemTimeExt,
         B: BatteryControllerExt,
     {
-        // Force a full redraw on startup
-        let force = self.text.is_empty();
+        let force = self.redraw;
+        self.redraw = false;
 
         let dt = res.sys_time.date_time();
         let date = dt.date();
