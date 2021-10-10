@@ -440,9 +440,6 @@ mod app {
         let display = ctx.shared.display;
         let display_state = ctx.shared.display_state;
 
-        // TODO - move this to after drawing so it can clear/draw over it
-        display.update_animations().unwrap();
-
         if display_state.is_awake() {
             let screen = ctx.local.watch_face;
 
@@ -454,6 +451,8 @@ mod app {
             screen.draw(display).unwrap();
             screen.clear_redraw();
         }
+
+        display.update_animations().unwrap();
 
         draw_screen::spawn_after(SCREEN_REFRESH_INTERVAL).unwrap();
     }

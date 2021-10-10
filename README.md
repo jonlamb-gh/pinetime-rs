@@ -20,6 +20,7 @@ See [pinetime-simulator](host-tools/pinetime-simulator) crate.
 
 ## TODOs
 
+* Fix the system time RTC monotonic impl, seems to be a little fast
 * Redo linker scripts so image goes into the existing bootloader's firmware slot
   and use the bootloader update procedure, see [pinetime-mcuboot-bootloader](https://github.com/JF002/pinetime-mcuboot-bootloader)
 * Figure out some shared-bus for SPIM0, used by the ST7789 and external SPI NOR flash for
